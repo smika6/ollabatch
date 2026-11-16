@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 import { RequestQueue } from './queue.mjs';
 import { JobStore, JobStateError } from './jobs.mjs';
 import { Metrics } from './metrics.mjs';
+import { Insights } from './insights.mjs';
+import { parseStats } from './infer.mjs';
 import { parseSelector, matchesSelector } from './labels.mjs';
 import { chooseModel, modelForCard, rewriteModel } from './models.mjs';
 import { advance, etaSeconds, queueEta } from './progress.mjs';
@@ -63,6 +65,9 @@ export async function startHost({
   const store = JobStore.fromJSON(state.jobs, { now, isAlive: pidAlive });
   const userLabels = state.cardLabels || {};   // cardKey → { k: v }, set from the dashboard/CLI
   const metrics = Metrics.fromJSON(readJson(files.metrics), { now });
+  files.insights = path.join(stateDir, 'insights.json');
+  const insights = Insights.fromJSON(readJson(files.insights), { now });
+  let onRequestDone = null;   // set by job stats (history)
   const templates = loadTemplates(jobsFile);
   const selectors = new Map();                 // jobId → parsed selector
   const handles = new Map();                   // jobId → runner handle
@@ -93,7 +98,10 @@ export async function startHost({
   const liveCards = () => queue.activeWorkers().filter((w) => !w.paused);
 
   const saveState = () => writeJsonAtomic(files.state, { jobs: store.toJSON(), cardLabels: userLabels });
-  const saveMetrics = () => { try { writeJsonAtomic(files.metrics, metrics.toJSON()); } catch (e) { log(`! couldn't save metrics: ${e.message}`); } };
+  const saveMetrics = () => {
+    try { writeJsonAtomic(files.metrics, metrics.toJSON()); writeJsonAtomic(files.insights, insights.toJSON()); }
+    catch (e) { log(`! couldn't save metrics: ${e.message}`); }
+  };
   const saver = createSaver(saveState, 500, (e) => log(`! couldn't save state: ${e.message}`));
   const changed = () => { saver.schedule(); setImmediate(tick); };
 
@@ -181,7 +189,12 @@ export async function startHost({
     const lease = queue.leased.get(reqId);
     const accepted = queue.complete(reqId, workerId, result);
     if (accepted && lease) {
-      metrics.record({ cardId: workerId, jobId: lease.jobId, ok: result.status >= 200 && result.status < 300, ms: now() - lease.leasedAt });
+      const ok = result.status >= 200 && result.status < 300;
+      metrics.record({ cardId: workerId, jobId: lease.jobId, ok, ms: now() - lease.leasedAt });
+      const stats = ok ? parseStats(result.body, result.contentType) : null;
+      insights.record({ card: workerId, job: lease.jobId, model: stats?.model, ok, retried: lease.attempts > 1,
+        waitSec: (lease.leasedAt - lease.enqueuedAt) / 1000, latencySec: (now() - lease.leasedAt) / 1000, stats });
+      onRequestDone?.(lease, workerId, ok, stats, result);
     }
     return accepted;
   }
@@ -421,6 +434,12 @@ export async function startHost({
       if (typeof b.machine !== 'string' || !b.machine) throw new HttpError(400, 'machine is required');
       if (b.cards != null && !Array.isArray(b.cards)) throw new HttpError(400, 'cards must be a list');
       reports.set(b.machine, { ...b, seenAt: now() });
+      for (const c of b.cards || []) {
+        const w = c.workerId && queue.workers.get(c.workerId);
+        insights.sampleCard(c.workerId || `${b.machine}-${c.id}`, { tempC: c.tempC ?? null, vramMB: c.vramMB ?? null,
+          vramUsedMB: c.vramMB != null && c.freeMB != null ? c.vramMB - c.freeMB : null, util: c.util ?? null, powerW: c.powerW ?? null,
+          slots: c.slots ?? null, slotsBusy: w ? [...queue.leased.values()].filter((r) => r.workerId === w.id).length : null, state: c.state });
+      }
       return send(res, 200, { ok: true });
     }
     if (req.method === 'GET' && p === '/pool/wants') {
@@ -441,6 +460,16 @@ export async function startHost({
 
     // Control API.
     if (req.method === 'GET' && p === '/ob/status') return send(res, 200, fullStatus(loopback));
+    if (req.method === 'GET' && p === '/ob/insights') {
+      return send(res, 200, insights.series({ by: ['card', 'model', 'job'].includes(url.searchParams.get('by')) ? url.searchParams.get('by') : 'card', range: url.searchParams.get('range') || '1h' }));
+    }
+    if (req.method === 'GET' && p === '/ob/insights/now') {
+      const n = insights.now();
+      return send(res, 200, { ...n, loadsLastHour: Object.fromEntries([...queue.workers.keys()].map((id) => [id, insights.loadsLastHour(id)])) });
+    }
+    if (req.method === 'GET' && (m = p.match(/^\/ob\/insights\/cards\/([^/]+)$/))) {
+      return send(res, 200, { range: url.searchParams.get('range') || '1h', samples: insights.cardSeries(decodeURIComponent(m[1]), url.searchParams.get('range') || '1h') });
+    }
     if (req.method === 'GET' && p === '/ob/metrics') {
       const by = url.searchParams.get('by') === 'job' ? 'job' : 'card';
       const minutes = Math.min(1440, Math.max(1, Number(url.searchParams.get('minutes')) || 60));

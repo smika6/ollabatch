@@ -25,7 +25,10 @@ export function startFakeOllama({ models = ['fake'], delayMs = 0, failWith = nul
         setTimeout(() => {
           if (res.destroyed) return;
           if (failWith) { res.writeHead(failWith.status, { 'Content-Type': 'application/json' }); return res.end(failWith.body); }
-          if (b.stream === false) return json(res, { model: b.model, message: { content: 'ok' }, done: true });
+          if (b.stream === false) {
+            return json(res, { model: b.model, message: { content: 'ok' }, done: true, total_duration: 2e8, load_duration: 1e7,
+              prompt_eval_count: 10, prompt_eval_duration: 5e7, eval_count: 20, eval_duration: 1e8 });
+          }
           res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
           res.end(NDJSON);
         }, delayMs);
