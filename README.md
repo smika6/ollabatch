@@ -15,8 +15,12 @@ join and take work, and watch and steer it all from one dashboard.
   give a job a selector (`vram>=12, owner!=sam`); it only runs where it fits.
 - **Model lists.** A job can say "26b if enough cards have it, else 12b" and
   ollabatch picks one model for the whole job, or per card if you allow it.
-- **Your machine stays yours.** Pause any card from the dashboard and its
-  models are unloaded, VRAM freed.
+- **Your machine stays yours.** Each machine runs a small agent with its own
+  page, where its owner pauses cards, sets when to lend (default: step aside
+  while a fullscreen game or video runs) and caps the disk models may use.
+- **It sets each card up itself.** The agent finds every GPU, runs one pinned
+  Ollama per card, finds how many requests each card handles best by
+  measuring, and reuses models already on the machine instead of copying them.
 - **No containers, no dependencies.** Node 20+ and Ollama. Windows, macOS,
   Linux; NVIDIA, Intel Arc, Apple silicon, anything Ollama runs on.
 
@@ -30,17 +34,26 @@ cd ollabatch/examples
 node ../bin/ollabatch.mjs host --password pick-something
 ```
 
-It prints the dashboard address and a join command. Open
-`http://127.0.0.1:11500/` there, or `http://<host-ip>:11500/` from a phone.
-If Ollama runs on the host, its GPU joins automatically.
+It prints the dashboard address. Open `http://127.0.0.1:11500/` there, or
+`http://<host-ip>:11500/` from any device. If Ollama runs on the host, its
+GPU joins automatically.
 
-On every other machine with Ollama and a model pulled
-(`ollama pull gemma4:12b`):
+To add a computer, open the dashboard **on that computer** and use **Add a
+machine**: the first time, copy its one-line installer (it needs Node.js 20+
+and Ollama; no admin rights, no git):
+
+```powershell
+irm http://<host-ip>:11500/install.ps1 | iex      # Windows
+```
 
 ```bash
-git clone https://github.com/smika6/ollabatch
-node ollabatch/bin/ollabatch.mjs join http://<host-ip>:11500 --password pick-something --labels vram=8
+curl -fsSL http://<host-ip>:11500/install.sh | sh  # macOS / Linux
 ```
+
+It puts `ollabatch` on that computer's PATH, starts its agent at login and
+opens the agent's page, which asks you to confirm lending to your pool. After
+that, **Lend this PC's GPUs** on the dashboard is one click on any computer
+that has it.
 
 Then queue work. From the dashboard, **Add job** runs the example template:
 it answers the 20 prompts in `examples/example.jsonl`. From the host's
@@ -51,11 +64,34 @@ node ../bin/ollabatch.mjs submit --name "my batch" --model gemma4:12b -- node ba
 node ../bin/ollabatch.mjs ls
 ```
 
-`npm link` in the repo puts `ollabatch` on your PATH.
+On the host itself, `node bin/ollabatch.mjs install` puts `ollabatch` on
+your PATH too.
 
 **Step-by-step for a house of machines** (a Mac hosting, Windows PCs with one
-or several GPUs joining, pinning one Ollama per card, keeping things awake):
+or several GPUs joining, what the agent does on each):
 [docs/home-setup.md](docs/home-setup.md).
+
+## The agent
+
+`ollabatch agent` (started at login by the installer) runs on every lending
+machine. Its page, `http://127.0.0.1:11510/`, answers only that machine:
+
+- **Cards**: each GPU's state and why (lending, paused, stepped aside for a
+  fullscreen program, off schedule), with Pause / Resume and lending on/off
+  per card. The pool's dashboard can't override the owner.
+- **When to lend**: when the GPU is free (Windows: a card steps aside while a
+  fullscreen program uses it and comes back 3 minutes after), always, on a
+  schedule, or never.
+- **Model playground**: a size-limited folder for the models the pool needs.
+  Models already on the machine are linked in at no extra space; others are
+  downloaded only if the owner allows it; locked models stay; the least
+  recently used unlocked ones make room.
+- **Slots by measurement**: each card starts at one request at a time and
+  climbs while it pays off, backing down if it runs short of memory or slows.
+
+The dashboard's Machines view shows every agent's hardware (VRAM, free memory,
+temperature, power; "unknown" where a driver doesn't report it), slots and
+playground.
 
 ## How it works
 
@@ -138,17 +174,24 @@ ollabatch host   [--port 11500] [--password pw] [--jobs ollabatch.jobs.json] [--
 ollabatch join   <host-url> --password pw [--ollama url] [--slots 2] [--label name] [--labels k=v,...]
 ollabatch submit [--host url] --name n [--model m]... [--any-model] [--select selector] [--cwd dir] [--shell] -- <command> [args...]
 ollabatch ls | move <job> <index> | pause | resume | cancel | rerun <job> | log <job> [--tail 200]
+ollabatch install [--trusted]      # put ollabatch on the PATH, start the agent at login (and now)
+ollabatch uninstall
+ollabatch agent [--host url] [--password pw] [--trusted]   |   ollabatch agent status
 ```
+
+`--trusted` lets the agent download models without asking (for your own
+machines); otherwise downloads stay off until the machine's owner allows them
+on its page.
 
 `submit`, `ls` and the job commands talk to `--host` (default
 `http://127.0.0.1:11500`); from another machine add `--password`.
 
 ## Roadmap
 
-1. **Scheduler and dashboard** (this release).
-2. **Machine agent**: one daemon per machine that finds its GPUs, starts a
-   pinned Ollama per card, pulls models, reports VRAM and temperature, and can
-   pause a card automatically while someone is using that PC.
+1. **Scheduler and dashboard** (shipped).
+2. **Machine agent** (shipped): finds its GPUs, runs a pinned Ollama per card,
+   tunes slots, manages a model playground, steps aside for fullscreen
+   programs, one-command install and a Lend button.
 3. **Job files and placement**: job manifests you commit, smarter model
    placement and swapping across cards.
 4. **Pooled memory**: run one model too big for any single card across

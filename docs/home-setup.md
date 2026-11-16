@@ -54,7 +54,38 @@ copy of ollabatch.
    needed there), or `http://<mac-address>:11500/` from a phone or another
    computer (type the password once; that device remembers it).
 
-## 2. A Windows PC with one GPU
+## 2. Every other computer: install the agent once
+
+On the computer you want to add (it needs Node.js 20+ and Ollama), open the
+dashboard (`http://<mac-address>:11500/`) and go to **Add a machine**. Copy the
+installer for that system and run it in a terminal:
+
+```powershell
+irm http://<mac-address>:11500/install.ps1 | iex      # Windows (PowerShell)
+```
+
+```bash
+curl -fsSL http://<mac-address>:11500/install.sh | sh  # macOS / Linux
+```
+
+No admin rights and no git: it unpacks the Mac's copy of ollabatch, puts the
+`ollabatch` command on that computer's PATH, starts the agent now and at every
+login, and opens the agent's page, which asks you to confirm lending to the
+pool (type the pool password there). From then on, **Lend this PC's GPUs** on
+the dashboard is one click on that computer.
+
+The agent does the rest of this guide by itself: it finds each GPU, runs one
+Ollama per card pinned to it (the user's own Ollama is left alone), tunes how
+many requests each card takes, and steps a card aside while a fullscreen
+program uses it. Its page, `http://127.0.0.1:11510/`, is where that computer's
+owner pauses cards, sets when to lend and limits the disk models may use.
+Install it on your own machines with `ollabatch install --trusted` to let them
+download the models the pool needs without asking.
+
+The rest of this guide is for setting machines up **by hand, without the
+agent**.
+
+## 2a. By hand: a Windows PC with one GPU
 
 Install Node 20+ (nodejs.org) and Ollama (ollama.com), pull the same model,
 then in PowerShell:
@@ -68,9 +99,9 @@ Joining only connects out to the Mac, so Windows asks for no firewall changes.
 Labels are optional; they let jobs pick cards (see the README). The card shows
 up under Machines within a few seconds.
 
-## 3. A Windows PC with several GPUs
+## 2b. By hand: a Windows PC with several GPUs
 
-Until the machine agent arrives (roadmap step 2), run one Ollama server per
+Without the agent, run one Ollama server per
 card yourself, each pinned to its GPU on its own port, then join each one.
 
 1. Quit the Ollama tray app (right-click its icon, Quit) so it doesn't hold
@@ -111,7 +142,7 @@ item.
 To get a card back for gaming, press **Pause card** on the dashboard: it stops
 taking work and unloads its model. **Resume card** puts it back to work.
 
-## 4. Linux or another Mac joining
+## 2c. By hand: Linux or another Mac
 
 ```bash
 git clone https://github.com/smika6/ollabatch ~/ollabatch
