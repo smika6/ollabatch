@@ -5,6 +5,12 @@ import { startHost, lanAddresses } from '../src/host.mjs';
 import { join } from '../src/join.mjs';
 import { parseLabels } from '../src/labels.mjs';
 import { adoptLegacyDir } from '../src/state.mjs';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { startAgent } from '../src/agent/agent.mjs';
+import { startPage } from '../src/agent/page.mjs';
+import { installAgent, uninstallAgent, defaults, realIo } from '../src/agent/install.mjs';
+import { loadConfig, saveConfig } from '../src/agent/config.mjs';
 
 const HELP = {
   host: 'ollabatch host [--port 11500] [--password pw] [--jobs ollabatch.jobs.json] [--max-running 1] [--state .ollabatch] [--local http://127.0.0.1:11434] [--local-slots 2] [--no-local] [--no-beacon]',
@@ -14,8 +20,30 @@ const HELP = {
   move: 'ollabatch move <job> <index> [--host url]',
   pause: 'ollabatch pause <job>', resume: 'ollabatch resume <job>', cancel: 'ollabatch cancel <job>', rerun: 'ollabatch rerun <job>',
   log: 'ollabatch log <job> [--tail 200] [--host url]',
+  agent: 'ollabatch agent [--host url] [--password pw] [--dir path] [--trusted]   |   ollabatch agent status',
+  install: 'ollabatch install [--host url] [--password pw] [--trusted]   (puts ollabatch on your PATH and starts the agent at login)',
+  uninstall: 'ollabatch uninstall',
 };
-const FLAGS = new Set(['--no-beacon', '--no-local', '--any-model', '--shell', '--help']);
+const FLAGS = new Set(['--no-beacon', '--no-local', '--any-model', '--shell', '--help', '--trusted']);
+const BIN = fileURLToPath(import.meta.url);
+
+async function userPath() {
+  if (process.platform !== 'win32') return '';
+  return (await realIo.exec('powershell', ['-NoProfile', '-NonInteractive', '-Command', "[Environment]::GetEnvironmentVariable('Path', 'User')"]) || '').trim();
+}
+
+async function install(f) {
+  const r = await installAgent({ ...defaults(), ...realIo, binPath: BIN, trusted: !!f.trusted, userPath: await userPath() });
+  if (f.host) {
+    const dir = path.join(os.homedir(), '.ollabatch', 'agent');
+    const cfg = loadConfig(dir, { trusted: !!f.trusted });
+    cfg.host = f.host.replace(/\/+$/, '');
+    if (f.password) cfg.password = f.password;
+    saveConfig(dir, cfg);
+  }
+  console.log(`ollabatch is on your PATH (${r.binDir}); open a new terminal to use it.`);
+  console.log('The agent starts at login. Its page: http://127.0.0.1:11510/');
+}
 
 function parse(argv) {
   const out = { _: [], flags: {}, rest: [] };
@@ -67,6 +95,29 @@ const COMMANDS = {
     const stop = async () => { await h.close(); process.exit(0); };
     process.on('SIGINT', stop);
     process.on('SIGTERM', stop);
+  },
+  async agent(a) {
+    const f = a.flags;
+    if (a._[0] === 'install') return install(f);
+    if (a._[0] === 'uninstall') return COMMANDS.uninstall(a);
+    if (a._[0] === 'status') {
+      let s;
+      try { s = await (await fetch('http://127.0.0.1:11510/status')).json(); } catch { throw new Error('the agent is not running on this machine'); }
+      console.log(`${s.machine}: ${s.joined ? `lending to ${s.host}` : 'not in a pool'} - policy ${s.policy}`);
+      for (const c of s.cards) console.log(`  ${c.name}\t${c.state}${c.reason ? ` (${c.reason})` : ''}${c.slots ? `\t${c.slots} slot(s)` : ''}`);
+      return;
+    }
+    const agent = await startAgent({ dir: f.dir, host: f.host, password: f.password, trusted: !!f.trusted, log: (s) => console.log(s) });
+    const page = await startPage({ agent });
+    console.log(`agent running - its page: http://127.0.0.1:${page.port}/`);
+    const stop = async () => { await page.close(); await agent.close(); process.exit(0); };
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+  },
+  async install(a) { return install(a.flags); },
+  async uninstall() {
+    await uninstallAgent({ ...defaults(), ...realIo, userPath: await userPath() });
+    console.log('ollabatch removed from your PATH and from starting at login.');
   },
   async join(a) {
     const f = a.flags;

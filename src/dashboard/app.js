@@ -234,9 +234,14 @@ async function renderGraphs() {
 }
 
 // ── join ─────────────────────────────────────────────────────────────────────
+let OS = /Windows/.test(navigator.userAgent) ? 'win' : 'unix';
 function renderJoin() {
   const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
   const url = local && INFO?.urls?.[0] ? INFO.urls[0] : location.origin;
+  // The password rides after '#', so it never leaves the computer that clicks.
+  $('lendLink').href = `http://127.0.0.1:11510/#join=${encodeURIComponent(url)}&pw=${encodeURIComponent(TOKEN)}`;
+  $('installCmd').textContent = OS === 'win' ? `irm ${url}/install.ps1 | iex` : `curl -fsSL ${url}/install.sh | sh`;
+  document.querySelectorAll('[data-os]').forEach((x) => x.classList.toggle('on', x.dataset.os === OS));
   $('joinCmd').textContent = `ollabatch join ${url} --password ${TOKEN}`;
 }
 
@@ -300,9 +305,11 @@ document.addEventListener('click', async (e) => {
       await renderGraphs();
     } else if (b.id === 'addToggle') {
       const f = $('addForm'); f.hidden = !f.hidden; b.setAttribute('aria-expanded', String(!f.hidden));
-    } else if (b.id === 'copyJoin') {
-      b.textContent = (await copy($('joinCmd').textContent)) ? 'Copied' : 'Select and copy';
+    } else if (b.dataset.copy) {
+      b.textContent = (await copy($(b.dataset.copy).textContent)) ? 'Copied' : 'Select and copy';
       setTimeout(() => { b.textContent = 'Copy'; }, 1600);
+    } else if (b.dataset.os) {
+      OS = b.dataset.os; renderJoin();
     } else if (b.id === 'logClose') {
       $('logDialog').close();
     }

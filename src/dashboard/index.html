@@ -62,9 +62,17 @@
 
   <section class="join" aria-labelledby="joinTitle">
     <h2 id="joinTitle">Add a machine</h2>
-    <p>On the other machine, with Ollama running and this repo cloned:</p>
-    <div class="cmd"><code id="joinCmd"></code><button id="copyJoin">Copy</button></div>
-    <p class="note">Give it labels to steer jobs, for example <code>--labels owner=sam,vram=8</code>. It shows up under Machines within a few seconds.</p>
+    <p>Open this page on the computer you want to add, then:</p>
+    <div class="row"><a class="lend" id="lendLink" target="_blank" rel="noopener">Lend this PC's GPUs</a></div>
+    <p class="note">It opens ollabatch's own page on that computer and asks you to confirm. Nothing opens? ollabatch isn't installed there yet: run this once (it needs Node.js 20+ and Ollama), then press the button again.</p>
+    <div class="seg" role="group" aria-label="Operating system">
+      <button data-os="win" class="on">Windows</button><button data-os="unix">macOS / Linux</button>
+    </div>
+    <div class="cmd"><code id="installCmd"></code><button data-copy="installCmd">Copy</button></div>
+    <p class="note">The installer comes from this host over your home network. It puts <code>ollabatch</code> on that computer's PATH and starts its agent at login, with no admin rights.</p>
+    <details><summary class="note">Already have the <code>ollabatch</code> command and want to join one card by hand?</summary>
+      <div class="cmd"><code id="joinCmd"></code><button data-copy="joinCmd">Copy</button></div>
+    </details>
   </section>
 </main>
 

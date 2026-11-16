@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ollabatch on this PC</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .panel h2 { margin-bottom: 8px; }
+  .confirm { border: 2px solid var(--amber); }
+  .choices { display: grid; gap: 6px; margin: 6px 0 10px; }
+  .choices label { display: flex; gap: 8px; align-items: baseline; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+  .grid2 label { display: grid; gap: 3px; font-size: 13px; color: var(--mute); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 6px 4px; border-top: 1px solid var(--line); }
+  td.n { text-align: right; white-space: nowrap; }
+  .days { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .days label { font-size: 13px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">ollabatch</div>
+  <p class="summary" id="summary">Loading…</p>
+</header>
+
+<section id="confirm" class="panel confirm" hidden>
+  <h2 id="confirmTitle">Lend this PC's GPUs?</h2>
+  <p id="confirmText"></p>
+  <div class="row" id="confirmPwRow" hidden><input id="confirmPw" type="password" placeholder="Pool password" aria-label="Pool password"></div>
+  <div class="row"><button class="primary" id="confirmYes">Lend this PC</button><button id="confirmNo">Not now</button></div>
+</section>
+
+<section class="panel">
+  <h2>This PC's cards</h2>
+  <div id="cards"></div>
+</section>
+
+<section class="panel">
+  <h2>Pool</h2>
+  <div id="pool"></div>
+  <form id="joinForm" class="row" hidden>
+    <input id="joinUrl" placeholder="http://192.168.1.20:11500" aria-label="Host address">
+    <input id="joinPw" type="password" placeholder="Pool password" aria-label="Pool password">
+    <button class="primary" type="submit">Join</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>When to lend</h2>
+  <form id="policyForm">
+    <div class="choices">
+      <label><input type="radio" name="policy" value="when-free"> <span><b>When the GPU is free.</b> A card steps aside while a fullscreen program (a game, a fullscreen video) uses it, and comes back 3 minutes after.</span></label>
+      <label><input type="radio" name="policy" value="always"> <span><b>Always.</b></span></label>
+      <label><input type="radio" name="policy" value="schedule"> <span><b>On a schedule.</b></span></label>
+      <label><input type="radio" name="policy" value="never"> <span><b>Never.</b> This PC still shows its hardware to the pool.</span></label>
+    </div>
+    <div id="scheduleBox" hidden>
+      <div class="grid2">
+        <label>From<input type="time" id="from" value="23:00"></label>
+        <label>To<input type="time" id="to" value="07:00"></label>
+      </div>
+      <div class="days" id="days"></div>
+    </div>
+    <p class="note" id="watcherNote" hidden>This system can't tell when a fullscreen program is running yet, so "when the GPU is free" lends all the time here. Use Pause when you need a card back.</p>
+    <button class="primary" type="submit">Save</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Model playground</h2>
+  <p class="note" id="pgSummary"></p>
+  <form id="pgForm" class="grid2">
+    <label>Size limit (GB)<input type="number" id="limit" min="1" step="1"></label>
+    <label>Downloads<select id="downloads"><option value="1">Allowed</option><option value="0">Not allowed</option></select></label>
+    <div><button class="primary" type="submit">Save</button></div>
+  </form>
+  <table><tbody id="models"></tbody></table>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>

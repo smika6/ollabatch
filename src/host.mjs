@@ -20,6 +20,7 @@ import { loadTemplates, instantiate, specProblem } from './templates.mjs';
 import { readJson, writeJsonAtomic, createSaver } from './state.mjs';
 import { workerLoop, makeUnloader, ollamaModels } from './worker.mjs';
 import { startBeacon, BEACON_PORT } from './discovery.mjs';
+import { tarFiles, appFiles } from './tar.mjs';
 
 // An agent on this machine answers on its local page; then it lends the GPUs
 // and the host's own built-in card stays off (two servers on one GPU would
@@ -29,6 +30,8 @@ async function probeLocalAgent() {
 }
 
 const DASHBOARD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dashboard');
+const INSTALLERS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'install');
+const APP_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const INFERENCE = /^\/api\/(chat|generate|show|embed|embeddings)$/;
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const LOCAL_NAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -359,6 +362,18 @@ export async function startHost({
     if (req.method === 'GET' && (p === '/' || p === '/pool')) return dashboard(res, loopback);
     if (req.method === 'GET' && STATIC[p]) {
       try { return send(res, 200, fs.readFileSync(path.join(DASHBOARD, p.slice(1))), STATIC[p]); } catch { return send(res, 404, 'not found', 'text/plain'); }
+    }
+    // One-command installers and the app itself, for machines joining for the
+    // first time. Open source and secret-free, so no password.
+    if (req.method === 'GET' && (p === '/install.ps1' || p === '/install.sh')) {
+      const h = req.headers.host || '';
+      if (!/^[A-Za-z0-9.\-]+(:\d+)?$/.test(h)) throw new HttpError(400, 'bad Host header');
+      const text = fs.readFileSync(path.join(INSTALLERS, p.slice(1)), 'utf8').replaceAll('__HOST__', `http://${h}`);
+      return send(res, 200, text, 'text/plain; charset=utf-8');
+    }
+    if (req.method === 'GET' && p === '/ollabatch.tar') {
+      res.writeHead(200, { 'Content-Type': 'application/x-tar', 'Content-Disposition': 'attachment; filename="ollabatch.tar"' });
+      return res.end(tarFiles(APP_ROOT, appFiles(APP_ROOT)));
     }
     // Legacy status for older join clients: no commands, no env.
     if (req.method === 'GET' && p === '/pool/status') {

@@ -131,3 +131,9 @@ dialog.log pre { margin: 0; max-height: 64vh; overflow: auto; font-size: 12.5px;
 @media (prefers-reduced-motion: no-preference) {
   .bar > i { transition: width .6s ease-out; }
 }
+
+/* Add a machine */
+a.lend { display: inline-block; text-decoration: none; padding: 7px 14px; border-radius: 6px; background: var(--amber); color: #1b1300; font-weight: 600; margin: 4px 0 8px; }
+a.lend:hover { filter: brightness(1.05); }
+.join .seg { margin: 6px 0 2px; }
+.join details { margin-top: 6px; }
