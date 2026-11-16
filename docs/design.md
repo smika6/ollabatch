@@ -1,4 +1,4 @@
-# rigpool design
+# ollabatch design
 
 ## Intent
 
@@ -145,7 +145,7 @@ machine.
 
 - **Host CLI** (loopback): any command.
 - **Dashboard / other devices** (pool password): only **templates** from
-  `rigpool.jobs.json` on the host, with params limited to listed values; plus
+  `ollabatch.jobs.json` on the host, with params limited to listed values; plus
   reorder / pause / resume / cancel / re-run and label edits.
 - Loopback trust also requires a local `Host` header and no foreign `Origin`,
   so a web page in a browser on the host gets nothing.
@@ -153,7 +153,7 @@ machine.
 ### Progress and ETA
 
 - Progress: a `done/total` line on the job's output (pattern overridable), or
-  a `POST` to `RIGPOOL_PROGRESS_URL`.
+  a `POST` to `OLLABATCH_PROGRESS_URL`.
 - Per-job ETA from an EMA of the rate; queue ETA sums known parts and counts
   jobs with no total or estimate as unknown rather than guessing.
 
@@ -164,7 +164,7 @@ machine.
 - Dashboard sections: overview, queue, machines (a rack: one shelf per
   machine, one bay per card), graphs, add-a-machine. Light and dark, usable on
   a phone.
-- State dir `./.rigpool/`: `state.json`, `metrics.json`, `logs/`, `token`;
+- State dir `./.ollabatch/`: `state.json`, `metrics.json`, `logs/`, `token`;
   atomic writes. On restart, running jobs become `failed (host restarted)`;
   `restartable` ones are re-queued at their old place unless their process is
   still alive.

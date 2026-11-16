@@ -6,7 +6,7 @@ export const BEACON_PORT = 11501;
 
 export function startBeacon({ port = BEACON_PORT, info, every = 5000, targets = ['255.255.255.255'] }) {
   const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-  const msg = Buffer.from(JSON.stringify({ rigpool: 1, name: String(info.name), url: String(info.url) }));
+  const msg = Buffer.from(JSON.stringify({ ollabatch: 1, name: String(info.name), url: String(info.url) }));
   let timer = null;
   const send = () => { for (const t of targets) sock.send(msg, port, t, () => {}); };
   sock.on('error', () => {});
@@ -25,8 +25,8 @@ export function listenBeacons({ port = BEACON_PORT, onHost = () => {}, reuseAddr
   sock.on('message', (buf, rinfo) => {
     let m;
     try { m = JSON.parse(buf.toString('utf8')); } catch { return; }
-    if (!m || m.rigpool !== 1 || typeof m.name !== 'string' || typeof m.url !== 'string') return;
-    if (Object.keys(m).some((k) => !['rigpool', 'name', 'url'].includes(k))) return;   // e.g. a beacon leaking a password
+    if (!m || m.ollabatch !== 1 || typeof m.name !== 'string' || typeof m.url !== 'string') return;
+    if (Object.keys(m).some((k) => !['ollabatch', 'name', 'url'].includes(k))) return;   // e.g. a beacon leaking a password
     if (!/^http:\/\/[A-Za-z0-9.\-]+:\d+$/.test(m.url)) return;
     const h = { name: m.name.slice(0, 100), url: m.url, from: rinfo.address, seenAt: Date.now() };
     hosts.set(h.url, h);

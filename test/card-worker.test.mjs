@@ -8,7 +8,7 @@ import { startCardWorker } from '../src/card-worker.mjs';
 import { startFakeOllama } from '../testdata/fake-ollama.mjs';
 import { pullWorker, waitFor, api } from '../testdata/helpers.mjs';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rigpool card '));
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ollabatch card '));
 const cleanup = [];
 after(async () => { for (const f of cleanup.reverse()) await f(); });
 
@@ -100,7 +100,7 @@ test('registers machine, labels and hardware', async () => {
   const { base } = await hostAt();
   const f = await fake();
   await card(base, f.url, { labels: { gpu: 'nvidia' }, hardware: { name: 'RTX', vramMB: 16303 } });
-  const s = await api(base, 'secret-pw')('GET', '/rp/status');
+  const s = await api(base, 'secret-pw')('GET', '/ob/status');
   const c = s.json.workers.find((x) => x.id === 'desk-card0');
   assert.equal(c.machine, 'desk');
   assert.equal(c.labels.gpu, 'nvidia');

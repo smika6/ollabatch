@@ -41,7 +41,7 @@ class HttpError extends Error {
 }
 
 export async function startHost({
-  port = 11500, password, stateDir = '.rigpool', jobsFile = null, maxRunning = 1,
+  port = 11500, password, stateDir = '.ollabatch', jobsFile = null, maxRunning = 1,
   local = null, bind = '0.0.0.0', now = Date.now, log = () => {},
   localForced = false, agentProbe = probeLocalAgent,
   beacon = true, beaconPort = BEACON_PORT, beaconTargets = undefined,
@@ -247,13 +247,13 @@ export async function startHost({
   };
 
   async function inference(req, res, jobId, apiPath) {
-    if (!isLoopback(req)) return send(res, 403, { error: 'rigpool: the model API is only for jobs on this host' });
+    if (!isLoopback(req)) return send(res, 403, { error: 'ollabatch: the model API is only for jobs on this host' });
     const live = () => {
       const job = jobOr404(jobId);
       if (job.status !== 'running' && job.status !== 'paused') throw new HttpError(409, `job ${jobId} is ${job.status}`);
     };
     if (jobId !== '_') live();
-    else if (!queue.activeWorkers().length) return send(res, 503, { error: 'rigpool: no cards have joined yet' });
+    else if (!queue.activeWorkers().length) return send(res, 503, { error: 'ollabatch: no cards have joined yet' });
     const body = await readBody(req);
     if (jobId !== '_') live();   // it may have been cancelled while the body arrived
     // A client that gives up (timeout, retry, exit) takes its request with it.
@@ -280,7 +280,7 @@ export async function startHost({
       try { spec = instantiate(t, body.params || {}); } catch (e) { throw new HttpError(400, e.message); }
     } else {
       // A free-form command runs on this machine: only from the host itself.
-      if (!loopback) throw new HttpError(403, 'rigpool: only templates can be added from another machine');
+      if (!loopback) throw new HttpError(403, 'ollabatch: only templates can be added from another machine');
       spec = { ...body };
     }
     const problem = specProblem(spec);
@@ -337,13 +337,13 @@ export async function startHost({
     try { html = fs.readFileSync(path.join(DASHBOARD, 'index.html'), 'utf8'); } catch { return send(res, 404, 'dashboard not built', 'text/plain'); }
     // The host's own browser gets the password baked in; other devices type it once.
     const attr = (s) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-    return send(res, 200, html.replace('__RIGPOOL_TOKEN__', isLocal ? attr(token) : ''), 'text/html; charset=utf-8');
+    return send(res, 200, html.replace('__OLLABATCH_TOKEN__', isLocal ? attr(token) : ''), 'text/html; charset=utf-8');
   }
 
   async function route(req, res) {
-    const url = new URL(req.url, 'http://rigpool');
+    const url = new URL(req.url, 'http://ollabatch');
     const p = url.pathname;
-    if (foreignOrigin(req)) return send(res, 403, { error: 'rigpool: cross-site request refused' });
+    if (foreignOrigin(req)) return send(res, 403, { error: 'ollabatch: cross-site request refused' });
     const loopback = isLoopback(req);
 
     // Model API for jobs (loopback only).
@@ -351,8 +351,8 @@ export async function startHost({
     if (req.method === 'POST' && INFERENCE.test(p)) return inference(req, res, '_', p);
     if (req.method === 'POST' && (m = p.match(/^\/j\/([\w-]+)(\/api\/(?:chat|generate|show|embed|embeddings))$/))) return inference(req, res, m[1], m[2]);
     if (req.method === 'GET' && (m = p.match(/^(?:\/j\/([\w-]+))?\/api\/(tags|version)$/))) {
-      if (!loopback) return send(res, 403, { error: 'rigpool: the model API is only for jobs on this host' });
-      if (m[2] === 'version') return send(res, 200, { version: 'rigpool' });
+      if (!loopback) return send(res, 403, { error: 'ollabatch: the model API is only for jobs on this host' });
+      if (m[2] === 'version') return send(res, 200, { version: 'ollabatch' });
       return send(res, 200, { models: tagsFor(m[1] || '_').map((name) => ({ name, model: name })) });
     }
 
@@ -365,7 +365,7 @@ export async function startHost({
       return send(res, 200, { ...queue.status(), progress: null, jobs: store.list().map((j) => ({ id: j.id, name: j.name, status: j.status, progress: j.progress })) });
     }
 
-    if (!authed(req, url)) return send(res, 401, { error: 'rigpool: missing or wrong password' });
+    if (!authed(req, url)) return send(res, 401, { error: 'ollabatch: missing or wrong password' });
 
     // Worker protocol.
     if (req.method === 'POST' && p === '/pool/register') {
@@ -425,14 +425,14 @@ export async function startHost({
     }
 
     // Control API.
-    if (req.method === 'GET' && p === '/rp/status') return send(res, 200, fullStatus(loopback));
-    if (req.method === 'GET' && p === '/rp/metrics') {
+    if (req.method === 'GET' && p === '/ob/status') return send(res, 200, fullStatus(loopback));
+    if (req.method === 'GET' && p === '/ob/metrics') {
       const by = url.searchParams.get('by') === 'job' ? 'job' : 'card';
       const minutes = Math.min(1440, Math.max(1, Number(url.searchParams.get('minutes')) || 60));
       return send(res, 200, metrics.series({ by, minutes }));
     }
-    if (req.method === 'POST' && p === '/rp/jobs') return send(res, 200, publicJob(newJob(await readJsonBody(req), loopback)));
-    if ((m = p.match(/^\/rp\/jobs\/([\w-]+)\/(\w+)$/))) {
+    if (req.method === 'POST' && p === '/ob/jobs') return send(res, 200, publicJob(newJob(await readJsonBody(req), loopback)));
+    if ((m = p.match(/^\/ob\/jobs\/([\w-]+)\/(\w+)$/))) {
       const job = jobOr404(m[1]);
       if (req.method === 'GET' && m[2] === 'log') {
         return send(res, 200, logTail(job, Math.min(5000, Number(url.searchParams.get('tail')) || 200)), 'text/plain; charset=utf-8');
@@ -447,7 +447,7 @@ export async function startHost({
       }
       if (req.method === 'POST' && JOB_ACTIONS.has(m[2])) return send(res, 200, await jobAction(job, m[2], await readJsonBody(req)));
     }
-    if (req.method === 'POST' && p === '/rp/cards/labels') {
+    if (req.method === 'POST' && p === '/ob/cards/labels') {
       const b = await readJsonBody(req);
       const w = queue.workers.get(b.card);
       if (!w) throw new HttpError(404, `no card ${b.card}`);
@@ -483,7 +483,7 @@ export async function startHost({
   let useLocal = !!local?.url;
   if (useLocal && !localForced && await agentProbe()) {
     useLocal = false;
-    log('a rigpool agent runs on this machine: it lends the GPUs, so the built-in local card stays off (--local forces it)');
+    log('a ollabatch agent runs on this machine: it lends the GPUs, so the built-in local card stays off (--local forces it)');
   }
   const beaconer = beacon && lanAddresses().length
     ? startBeacon({ port: beaconPort, targets: beaconTargets, info: { name: os.hostname(), url: `http://${lanAddresses()[0]}:${listenPort}` } })

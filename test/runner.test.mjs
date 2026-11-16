@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { startJob } from '../src/runner.mjs';
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'testdata');
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rigpool runner '));
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ollabatch runner '));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const job = (args, extra = {}) => ({ id: 'j9', command: process.execPath, args, cwd: tmp(), env: {}, shell: false, model: null, ...extra });
 
@@ -31,11 +31,11 @@ test('reports progress, logs output and exits 0, in a cwd with a space', async (
 
 test('job env carries the progress URL and the job env', async () => {
   const logDir = tmp();
-  const script = 'console.log(process.env.RIGPOOL_PROGRESS_URL, process.env.OLLAMA_HOST, process.env.EXTRA)';
+  const script = 'console.log(process.env.OLLABATCH_PROGRESS_URL, process.env.OLLAMA_HOST, process.env.EXTRA)';
   const { code } = await run(job(['-e', script], { env: { EXTRA: 'yes' } }), logDir);
   assert.equal(code, 0);
   const log = fs.readFileSync(path.join(logDir, 'j9.log'), 'utf8');
-  assert.match(log, /http:\/\/127\.0\.0\.1:4321\/rp\/jobs\/j9\/progress http:\/\/127\.0\.0\.1:4321\/j\/j9 yes/);
+  assert.match(log, /http:\/\/127\.0\.0\.1:4321\/ob\/jobs\/j9\/progress http:\/\/127\.0\.0\.1:4321\/j\/j9 yes/);
 });
 
 test('a custom progress pattern', async () => {

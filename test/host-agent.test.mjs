@@ -8,7 +8,7 @@ import { listenBeacons } from '../src/discovery.mjs';
 import { startFakeOllama } from '../testdata/fake-ollama.mjs';
 import { pullWorker, waitFor, api } from '../testdata/helpers.mjs';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rigpool hostagent '));
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ollabatch hostagent '));
 const cleanup = [];
 after(async () => { for (const f of cleanup.reverse()) await f(); });
 const LONG = { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: os.tmpdir() };
@@ -30,10 +30,10 @@ async function worker(base, id, models, extra) {
 test('wants: a running job\'s actual model, a queued job\'s first choice, only for matching cards', async () => {
   const s = await host();
   await worker(s.base, 'desk-nv', ['gemma4:12b'], { machine: 'desk', labels: { gpu: 'nvidia' } });
-  const running = (await s.call('POST', '/rp/jobs', { name: 'r', ...LONG, models: ['gemma4:26b', 'gemma4:12b'] })).json;
-  await waitFor(async () => (await s.call('GET', '/rp/status')).json.jobs.find((j) => j.id === running.id).status === 'running', 5000, 'running');
-  await s.call('POST', '/rp/jobs', { name: 'q', ...LONG, models: ['gemma4:26b', 'gemma4:12b'] });
-  await s.call('POST', '/rp/jobs', { name: 'arc only', ...LONG, models: ['qwen:9b'], selector: 'gpu=intel' });
+  const running = (await s.call('POST', '/ob/jobs', { name: 'r', ...LONG, models: ['gemma4:26b', 'gemma4:12b'] })).json;
+  await waitFor(async () => (await s.call('GET', '/ob/status')).json.jobs.find((j) => j.id === running.id).status === 'running', 5000, 'running');
+  await s.call('POST', '/ob/jobs', { name: 'q', ...LONG, models: ['gemma4:26b', 'gemma4:12b'] });
+  await s.call('POST', '/ob/jobs', { name: 'arc only', ...LONG, models: ['qwen:9b'], selector: 'gpu=intel' });
   const w = await s.call('GET', '/pool/wants?machine=desk');
   assert.deepEqual(w.json, { cards: { 'desk-nv': ['gemma4:12b', 'gemma4:26b'] } });
   assert.deepEqual((await s.call('GET', '/pool/wants?machine=elsewhere')).json, { cards: {} });
@@ -48,7 +48,7 @@ test('a machine report shows in status and sets each card\'s owner state', async
     { id: 'intel-963936', workerId: null, name: 'Intel(R) Arc(TM) A770 Graphics', vramMB: 16256, state: 'disabled', reason: 'lending turned off' }],
     playground: { limitGB: 50, usedBytes: 0, models: [] }, download: null };
   assert.equal((await s.call('POST', '/pool/machine', report)).status, 200);
-  const st = (await s.call('GET', '/rp/status')).json;
+  const st = (await s.call('GET', '/ob/status')).json;
   const m = st.machines.find((x) => x.machine === 'desk');
   assert.equal(m.report.cards.length, 2);
   assert.equal(m.report.cards[1].tempC, undefined);
@@ -58,7 +58,7 @@ test('a machine report shows in status and sets each card\'s owner state', async
 test('a machine that only reports (lends nothing) is still listed', async () => {
   const s = await host();
   await s.call('POST', '/pool/machine', { machine: 'gf-pc', os: 'win32', cards: [{ id: 'nvidia-1', workerId: null, name: 'RTX 3060 Ti', state: 'never' }] });
-  const m = (await s.call('GET', '/rp/status')).json.machines.find((x) => x.machine === 'gf-pc');
+  const m = (await s.call('GET', '/ob/status')).json.machines.find((x) => x.machine === 'gf-pc');
   assert.ok(m);
   assert.deepEqual(m.cards, []);
 });
@@ -75,9 +75,9 @@ test('the built-in local card is skipped when an agent answers, unless forced', 
   const f = await startFakeOllama();
   cleanup.push(() => f.close());
   const skipped = await host({ local: { url: f.url, slots: 1 }, agentProbe: async () => true });
-  assert.equal((await skipped.call('GET', '/rp/status')).json.workers.length, 0);
+  assert.equal((await skipped.call('GET', '/ob/status')).json.workers.length, 0);
   const forced = await host({ local: { url: f.url, slots: 1 }, localForced: true, agentProbe: async () => true });
-  assert.equal((await forced.call('GET', '/rp/status')).json.workers.length, 1);
+  assert.equal((await forced.call('GET', '/ob/status')).json.workers.length, 1);
 });
 
 test('the beacon announces name and URL and never the password', async () => {

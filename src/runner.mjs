@@ -13,7 +13,7 @@ export function jobEnv(job, port) {
   return {
     ...process.env, ...job.env,
     OLLAMA_URL: `${base}/j/${job.id}`, OLLAMA_HOST: `${base}/j/${job.id}`,
-    RIGPOOL_JOB_ID: job.id, RIGPOOL_PROGRESS_URL: `${base}/rp/jobs/${job.id}/progress`,
+    OLLABATCH_JOB_ID: job.id, OLLABATCH_PROGRESS_URL: `${base}/ob/jobs/${job.id}/progress`,
     ...(job.model ? { OLLAMA_MODEL: job.model } : {}),
   };
 }
@@ -51,7 +51,7 @@ export function startJob(job, { port, logDir, onProgress, onExit }) {
       onExit(code);
       resolve();
     };
-    child.on('error', (e) => { fs.writeSync(fd, `rigpool: ${e.message}\n`); finish(127); });
+    child.on('error', (e) => { fs.writeSync(fd, `ollabatch: ${e.message}\n`); finish(127); });
     child.on('close', (code, signal) => finish(code ?? (signal ? 1 : 0)));
   });
 

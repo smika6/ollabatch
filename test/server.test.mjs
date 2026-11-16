@@ -9,7 +9,7 @@ import { backendEnv, pickPorts, isPortFree, CardServer } from '../src/agent/serv
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'testdata', 'fake-ollama-bin.mjs');
 const OLLAMA = { command: process.execPath, args: [BIN] };
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rigpool server '));
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ollabatch server '));
 const servers = [];
 after(async () => { for (const s of servers) await s.stop(); });
 

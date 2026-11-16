@@ -3,9 +3,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readJson, writeJsonAtomic, createSaver } from '../src/state.mjs';
+import { readJson, writeJsonAtomic, createSaver, adoptLegacyDir } from '../src/state.mjs';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rigpool state '));
+test('a pre-rename .rigpool folder is moved to .ollabatch once', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ollabatch legacy '));
+  fs.mkdirSync(path.join(root, '.rigpool'));
+  fs.writeFileSync(path.join(root, '.rigpool', 'token'), 'kept');
+  assert.equal(adoptLegacyDir(path.join(root, '.ollabatch'), path.join(root, '.rigpool')), true);
+  assert.equal(fs.readFileSync(path.join(root, '.ollabatch', 'token'), 'utf8'), 'kept');
+  fs.mkdirSync(path.join(root, '.rigpool'));
+  assert.equal(adoptLegacyDir(path.join(root, '.ollabatch'), path.join(root, '.rigpool')), false, 'never overwrites');
+});
+
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ollabatch state '));
 
 test('write then read', () => {
   const f = path.join(tmp(), 'state.json');

@@ -121,7 +121,7 @@ export class RequestQueue {
     }
     if (w) { w.failed++; w.lastError = String(result?.error || `HTTP ${result?.status}`).slice(0, 200); }
     if (r.attempts >= this.maxAttempts) {
-      r.resolve({ status: 502, body: JSON.stringify({ error: `rigpool: gave up after ${r.attempts} attempts — last: ${w?.lastError || 'unknown'}` }) });
+      r.resolve({ status: 502, body: JSON.stringify({ error: `ollabatch: gave up after ${r.attempts} attempts — last: ${w?.lastError || 'unknown'}` }) });
     } else {
       this.#requeue(r, w?.lastError);
     }
@@ -151,7 +151,7 @@ export class RequestQueue {
       if (r.leasedAt >= cutoff) continue;
       if (r.attempts >= this.maxAttempts) {
         this.leased.delete(r.id);
-        r.resolve({ status: 502, body: JSON.stringify({ error: `rigpool: gave up after ${r.attempts} attempts — last: lease expired` }) });
+        r.resolve({ status: 502, body: JSON.stringify({ error: `ollabatch: gave up after ${r.attempts} attempts — last: lease expired` }) });
       } else {
         this.#requeue(r, 'lease expired');
       }

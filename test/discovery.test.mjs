@@ -27,9 +27,9 @@ test('garbage and password-carrying datagrams are ignored', async () => {
   const send = (msg) => new Promise((r) => s.send(Buffer.from(msg), p, '127.0.0.1', r));
   try {
     await send('not json');
-    await send(JSON.stringify({ rigpool: 2, name: 'x', url: 'http://a:1' }));
-    await send(JSON.stringify({ rigpool: 1, name: 'x', url: 'http://a:1', password: 'leak' }));
-    await send(JSON.stringify({ rigpool: 1, name: 'x', url: 'javascript:alert(1)' }));
+    await send(JSON.stringify({ ollabatch: 2, name: 'x', url: 'http://a:1' }));
+    await send(JSON.stringify({ ollabatch: 1, name: 'x', url: 'http://a:1', password: 'leak' }));
+    await send(JSON.stringify({ ollabatch: 1, name: 'x', url: 'javascript:alert(1)' }));
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(heard.length, 0);
   } finally { s.close(); l.stop(); }

@@ -31,6 +31,14 @@ export function writeJsonAtomic(file, value) {
   fs.renameSync(tmp, file);
 }
 
+// The project was called rigpool; a host started before the rename kept its
+// password and queue in .rigpool. Move it over once, never onto an existing dir.
+export function adoptLegacyDir(dir, legacy) {
+  if (fs.existsSync(dir) || !fs.existsSync(legacy)) return false;
+  fs.renameSync(legacy, dir);
+  return true;
+}
+
 // Saves run from timers, so a failure (a locked file on Windows, a full disk)
 // is reported, never thrown; the next schedule() tries again.
 export function createSaver(write, ms = 500, onError = () => {}) {

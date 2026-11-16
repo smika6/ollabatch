@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { listModels, linkModel, removeModel, usage, planEviction, remoteSize, cleanPartial } from '../src/agent/playground.mjs';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rigpool pg '));
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ollabatch pg '));
 const GB = 1024 ** 3;
 
 // Writes a model the way Ollama stores it: blobs by digest, a manifest per name:tag.

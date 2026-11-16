@@ -9,7 +9,7 @@ import { startFakeOllama } from '../testdata/fake-ollama.mjs';
 import { waitFor } from '../testdata/helpers.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BIN = path.join(ROOT, 'bin', 'rigpool.mjs');
+const BIN = path.join(ROOT, 'bin', 'ollabatch.mjs');
 const CALL = path.join(ROOT, 'testdata', 'call-ollama.mjs');
 const kids = [];
 after(() => { for (const k of kids) k.kill(); });
@@ -30,7 +30,7 @@ function startLong(args) {
 test('host + join + submit + ls end to end', async () => {
   const fake = await startFakeOllama();
   after(() => fake.close());
-  const state = fs.mkdtempSync(path.join(os.tmpdir(), 'rigpool cli '));
+  const state = fs.mkdtempSync(path.join(os.tmpdir(), 'ollabatch cli '));
   const host = startLong(['host', '--port', '0', '--password', 'secret-pw', '--state', state, '--no-local']);
   const port = await waitFor(() => host.output().match(/listening on :(\d+)/)?.[1], 10_000, 'host listening');
   const url = `http://127.0.0.1:${port}`;
@@ -51,11 +51,11 @@ test('host + join + submit + ls end to end', async () => {
   assert.equal(fake.calls.length, 3);
 });
 
-test('errors exit 1 with a rigpool: prefix', async () => {
+test('errors exit 1 with an ollabatch: prefix', async () => {
   const r = await cli(['move', 'nope', '0', '--host', 'http://127.0.0.1:9']);
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /^rigpool: /);
+  assert.match(r.stderr, /^ollabatch: /);
   const u = await cli(['frobnicate']);
   assert.equal(u.code, 1);
-  assert.match(u.stderr, /^rigpool: /);
+  assert.match(u.stderr, /^ollabatch: /);
 });

@@ -2,7 +2,7 @@
 // lives in a file on the host; the dashboard can only pick a template and
 // fill its params from each param's allowed values.
 //
-// rigpool.jobs.json: { "templates": [{ "id", "name", "command", "args": [], "cwd"?, "env"?,
+// ollabatch.jobs.json: { "templates": [{ "id", "name", "command", "args": [], "cwd"?, "env"?,
 //   "models": [], "modelPolicy"?, "minCards"?, "selector"?, "progressPattern"?, "estimate"?,
 //   "restartable"?, "shell"?, "params"?: [{ "name", "values": [], "default"? }] }] }
 import path from 'node:path';

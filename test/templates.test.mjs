@@ -6,8 +6,8 @@ import path from 'node:path';
 import { loadTemplates, instantiate } from '../src/templates.mjs';
 
 function fixture(obj) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rigpool tpl '));
-  const file = path.join(dir, 'rigpool.jobs.json');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ollabatch tpl '));
+  const file = path.join(dir, 'ollabatch.jobs.json');
   fs.writeFileSync(file, JSON.stringify(obj));
   return { dir, file };
 }
@@ -20,7 +20,7 @@ const TAG = {
 
 test('missing file → no templates', () => {
   assert.deepEqual(loadTemplates(null), []);
-  assert.deepEqual(loadTemplates(path.join(os.tmpdir(), 'no-such-rigpool.jobs.json')), []);
+  assert.deepEqual(loadTemplates(path.join(os.tmpdir(), 'no-such-ollabatch.jobs.json')), []);
 });
 
 test('invalid file throws with its path', () => {

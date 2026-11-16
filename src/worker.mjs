@@ -1,4 +1,4 @@
-// The loop every card runs, in-process on the host or remote via `rigpool join`:
+// The loop every card runs, in-process on the host or remote via `ollabatch join`:
 // take a request, run it on this card's Ollama, hand back the result.
 
 export const REQUEST_TIMEOUT_MS = 9 * 60_000;

@@ -1,4 +1,4 @@
-# rigpool agent: every 5 s, print one JSON line describing the foreground
+# ollabatch agent: every 5 s, print one JSON line describing the foreground
 # window (is it fullscreen, on which monitor and adapter), per-process GPU
 # engine use, and the Ollama processes (to tell the agent's own GPU use apart).
 # Kept ASCII-only: Windows PowerShell 5.1 reads BOM-less files as Windows-1252.

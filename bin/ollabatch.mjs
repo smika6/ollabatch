@@ -4,15 +4,16 @@ import path from 'node:path';
 import { startHost, lanAddresses } from '../src/host.mjs';
 import { join } from '../src/join.mjs';
 import { parseLabels } from '../src/labels.mjs';
+import { adoptLegacyDir } from '../src/state.mjs';
 
 const HELP = {
-  host: 'rigpool host [--port 11500] [--password pw] [--jobs rigpool.jobs.json] [--max-running 1] [--state .rigpool] [--local http://127.0.0.1:11434] [--local-slots 2] [--no-local] [--no-beacon]',
-  join: 'rigpool join <host-url> --password pw [--ollama http://127.0.0.1:11434] [--slots 2] [--label name] [--labels k=v,...]',
-  submit: 'rigpool submit [--host url] --name n [--model m]... [--any-model] [--select selector] [--cwd dir] [--shell] -- <command> [args...]',
-  ls: 'rigpool ls [--host url]',
-  move: 'rigpool move <job> <index> [--host url]',
-  pause: 'rigpool pause <job>', resume: 'rigpool resume <job>', cancel: 'rigpool cancel <job>', rerun: 'rigpool rerun <job>',
-  log: 'rigpool log <job> [--tail 200] [--host url]',
+  host: 'ollabatch host [--port 11500] [--password pw] [--jobs ollabatch.jobs.json] [--max-running 1] [--state .ollabatch] [--local http://127.0.0.1:11434] [--local-slots 2] [--no-local] [--no-beacon]',
+  join: 'ollabatch join <host-url> --password pw [--ollama http://127.0.0.1:11434] [--slots 2] [--label name] [--labels k=v,...]',
+  submit: 'ollabatch submit [--host url] --name n [--model m]... [--any-model] [--select selector] [--cwd dir] [--shell] -- <command> [args...]',
+  ls: 'ollabatch ls [--host url]',
+  move: 'ollabatch move <job> <index> [--host url]',
+  pause: 'ollabatch pause <job>', resume: 'ollabatch resume <job>', cancel: 'ollabatch cancel <job>', rerun: 'ollabatch rerun <job>',
+  log: 'ollabatch log <job> [--tail 200] [--host url]',
 };
 const FLAGS = new Set(['--no-beacon', '--no-local', '--any-model', '--shell', '--help']);
 
@@ -50,9 +51,11 @@ const dur = (s) => (s == null ? '' : s < 60 ? '<1m' : s < 3600 ? `${Math.round(s
 const COMMANDS = {
   async host(a) {
     const f = a.flags;
-    const jobsFile = f.jobs || (fs.existsSync('rigpool.jobs.json') ? path.resolve('rigpool.jobs.json') : null);
+    // Pre-rename names still work: a .rigpool folder moves over, a rigpool.jobs.json is read.
+    if (!f.state && adoptLegacyDir(path.resolve('.ollabatch'), path.resolve('.rigpool'))) console.log('moved .rigpool to .ollabatch (the project was renamed)');
+    const jobsFile = f.jobs || ['ollabatch.jobs.json', 'rigpool.jobs.json'].map((n) => path.resolve(n)).find((p) => fs.existsSync(p)) || null;
     const h = await startHost({
-      port: Number(f.port ?? 11500), password: f.password, stateDir: f.state || '.rigpool', jobsFile,
+      port: Number(f.port ?? 11500), password: f.password, stateDir: f.state || '.ollabatch', jobsFile,
       maxRunning: Number(f['max-running'] || 1),
       local: f['no-local'] ? null : { url: f.local || 'http://127.0.0.1:11434', slots: Number(f['local-slots'] || 2) },
       localForced: !!f.local, beacon: !f['no-beacon'],
@@ -60,7 +63,7 @@ const COMMANDS = {
     });
     console.log(`listening on :${h.port}`);
     console.log(`dashboard: http://127.0.0.1:${h.port}/`);
-    for (const ip of lanAddresses()) console.log(`join from another machine: rigpool join http://${ip}:${h.port} --password ${f.password ? '<your password>' : h.token}`);
+    for (const ip of lanAddresses()) console.log(`join from another machine: ollabatch join http://${ip}:${h.port} --password ${f.password ? '<your password>' : h.token}`);
     const stop = async () => { await h.close(); process.exit(0); };
     process.on('SIGINT', stop);
     process.on('SIGTERM', stop);
@@ -77,14 +80,14 @@ const COMMANDS = {
     const f = a.flags;
     if (!a.rest.length) throw new Error(`no command; usage: ${HELP.submit}`);
     const [command, ...args] = a.rest;
-    const job = await call(f, 'POST', '/rp/jobs', {
+    const job = await call(f, 'POST', '/ob/jobs', {
       name: f.name || path.basename(command), command, args, cwd: path.resolve(f.cwd || '.'),
       models: f.model || [], modelPolicy: f['any-model'] ? 'any' : 'one', selector: f.select || '', shell: !!f.shell,
     });
     console.log(job.id);
   },
   async ls(a) {
-    const s = await call(a.flags, 'GET', '/rp/status');
+    const s = await call(a.flags, 'GET', '/ob/status');
     for (const j of s.jobs) {
       const prog = j.progress.total ? `${j.progress.done}/${j.progress.total}` : `${j.progress.done}`;
       console.log([j.id, j.status, prog, dur(j.eta), j.model || '', j.name, j.reason ? `(${j.reason})` : ''].join('\t'));
@@ -92,12 +95,12 @@ const COMMANDS = {
     const q = s.queueEta;
     console.log(`queue: ~${dur(q.seconds) || '0m'} left${q.unknown ? ` + ${q.unknown} job(s) without an estimate` : ''} - ${s.workers.filter((w) => w.active).length} card(s) online`);
   },
-  async move(a) { await call(a.flags, 'POST', `/rp/jobs/${need(a, 0, 'move')}/move`, { index: Number(need(a, 1, 'move')) }); },
-  async pause(a) { await call(a.flags, 'POST', `/rp/jobs/${need(a, 0, 'pause')}/pause`, {}); },
-  async resume(a) { await call(a.flags, 'POST', `/rp/jobs/${need(a, 0, 'resume')}/resume`, {}); },
-  async cancel(a) { await call(a.flags, 'POST', `/rp/jobs/${need(a, 0, 'cancel')}/cancel`, {}); },
-  async rerun(a) { console.log((await call(a.flags, 'POST', `/rp/jobs/${need(a, 0, 'rerun')}/rerun`, {})).id); },
-  async log(a) { process.stdout.write(`${await call(a.flags, 'GET', `/rp/jobs/${need(a, 0, 'log')}/log?tail=${Number(a.flags.tail || 200)}`)}\n`); },
+  async move(a) { await call(a.flags, 'POST', `/ob/jobs/${need(a, 0, 'move')}/move`, { index: Number(need(a, 1, 'move')) }); },
+  async pause(a) { await call(a.flags, 'POST', `/ob/jobs/${need(a, 0, 'pause')}/pause`, {}); },
+  async resume(a) { await call(a.flags, 'POST', `/ob/jobs/${need(a, 0, 'resume')}/resume`, {}); },
+  async cancel(a) { await call(a.flags, 'POST', `/ob/jobs/${need(a, 0, 'cancel')}/cancel`, {}); },
+  async rerun(a) { console.log((await call(a.flags, 'POST', `/ob/jobs/${need(a, 0, 'rerun')}/rerun`, {})).id); },
+  async log(a) { process.stdout.write(`${await call(a.flags, 'GET', `/ob/jobs/${need(a, 0, 'log')}/log?tail=${Number(a.flags.tail || 200)}`)}\n`); },
 };
 
 function need(a, i, cmd) {
@@ -111,10 +114,10 @@ async function main() {
     console.log(Object.values(HELP).join('\n'));
     return;
   }
-  if (!COMMANDS[cmd]) throw new Error(`unknown command "${cmd}" (try: rigpool help)`);
+  if (!COMMANDS[cmd]) throw new Error(`unknown command "${cmd}" (try: ollabatch help)`);
   const a = parse(argv);
   if (a.flags.help) { console.log(HELP[cmd]); return; }
   await COMMANDS[cmd](a);
 }
 
-main().catch((e) => { process.stderr.write(`rigpool: ${e.message}\n`); process.exit(1); });
+main().catch((e) => { process.stderr.write(`ollabatch: ${e.message}\n`); process.exit(1); });

@@ -4,7 +4,7 @@ One machine is the **host**: it keeps the queue, runs the jobs' own code, and
 serves the dashboard. Here that's a Mac. Every other computer with a GPU
 **joins** and lends its cards. Jobs' commands always run on the host, so only
 the Mac needs your project's code; the other machines need only Ollama and a
-copy of rigpool.
+copy of ollabatch.
 
 ## 1. The Mac (host)
 
@@ -16,18 +16,18 @@ copy of rigpool.
    ollama pull gemma4:12b       # the model your jobs use
    ```
 
-2. Get rigpool:
+2. Get ollabatch:
 
    ```bash
-   git clone https://github.com/smika6/rigpool ~/rigpool
+   git clone https://github.com/smika6/ollabatch ~/ollabatch
    ```
 
 3. Start the host from the folder your jobs live in (where your
-   `rigpool.jobs.json` is, if you have one), kept awake for the night:
+   `ollabatch.jobs.json` is, if you have one), kept awake for the night:
 
    ```bash
    cd ~/my-project
-   caffeinate -i node ~/rigpool/bin/rigpool.mjs host --password pick-something
+   caffeinate -i node ~/ollabatch/bin/ollabatch.mjs host --password pick-something
    ```
 
    `caffeinate -i` stops the Mac from sleeping while the host runs; keep it
@@ -44,7 +44,7 @@ copy of rigpool.
    ```text
    listening on :11500
    dashboard: http://127.0.0.1:11500/
-   join from another machine: rigpool join http://192.168.1.20:11500 --password <your password>
+   join from another machine: ollabatch join http://192.168.1.20:11500 --password <your password>
    ```
 
    `ipconfig getifaddr en0` also shows the address. A DHCP reservation for the
@@ -60,8 +60,8 @@ Install Node 20+ (nodejs.org) and Ollama (ollama.com), pull the same model,
 then in PowerShell:
 
 ```powershell
-git clone https://github.com/smika6/rigpool $HOME\rigpool
-node $HOME\rigpool\bin\rigpool.mjs join http://<mac-address>:11500 --password pick-something --labels gpu=nvidia,vram=10
+git clone https://github.com/smika6/ollabatch $HOME\ollabatch
+node $HOME\ollabatch\bin\ollabatch.mjs join http://<mac-address>:11500 --password pick-something --labels gpu=nvidia,vram=10
 ```
 
 Joining only connects out to the Mac, so Windows asks for no firewall changes.
@@ -96,11 +96,11 @@ card yourself, each pinned to its GPU on its own port, then join each one.
 3. Join each card, each in its own window:
 
    ```powershell
-   node $HOME\rigpool\bin\rigpool.mjs join http://<mac-address>:11500 --password pick-something --ollama http://127.0.0.1:11434 --slots 2 --label "RTX card" --labels gpu=nvidia,vram=16
+   node $HOME\ollabatch\bin\ollabatch.mjs join http://<mac-address>:11500 --password pick-something --ollama http://127.0.0.1:11434 --slots 2 --label "RTX card" --labels gpu=nvidia,vram=16
    ```
 
    ```powershell
-   node $HOME\rigpool\bin\rigpool.mjs join http://<mac-address>:11500 --password pick-something --ollama http://127.0.0.1:11435 --slots 2 --label "Arc card" --labels gpu=intel,vram=16
+   node $HOME\ollabatch\bin\ollabatch.mjs join http://<mac-address>:11500 --password pick-something --ollama http://127.0.0.1:11435 --slots 2 --label "Arc card" --labels gpu=intel,vram=16
    ```
 
 **A card that also drives your monitors** has less free memory than its size
@@ -114,8 +114,8 @@ taking work and unloads its model. **Resume card** puts it back to work.
 ## 4. Linux or another Mac joining
 
 ```bash
-git clone https://github.com/smika6/rigpool ~/rigpool
-node ~/rigpool/bin/rigpool.mjs join http://<mac-address>:11500 --password pick-something
+git clone https://github.com/smika6/ollabatch ~/ollabatch
+node ~/ollabatch/bin/ollabatch.mjs join http://<mac-address>:11500 --password pick-something
 ```
 
 For several GPUs on Linux, pin one `ollama serve` per card with
@@ -138,5 +138,5 @@ For several GPUs on Linux, pin one `ollama serve` per card with
 |---|---|
 | A card shows "gone" | Its join window is still running and the Mac is reachable: open `http://<mac-address>:11500/` on that PC. |
 | A job says "waiting for cards" | No online card matches its selector or has its model. Compare the job's "needs" line with the card's labels and models under Machines. |
-| `the host rejected the pool password` | The password is the one given to `rigpool host`, also saved in `.rigpool/token` in the folder the host runs from. |
+| `the host rejected the pool password` | The password is the one given to `ollabatch host`, also saved in `.ollabatch/token` in the folder the host runs from. |
 | Nothing can reach the Mac | The macOS firewall is blocking node (step 1.4), or the PC is on a guest network. |

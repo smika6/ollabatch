@@ -1,9 +1,9 @@
-// rigpool dashboard: polls /rp/status every 2 s and /rp/metrics every 30 s.
+// ollabatch dashboard: polls /ob/status every 2 s and /ob/metrics every 30 s.
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const store = {
-  get: () => { try { return localStorage.getItem('rigpool-token') || ''; } catch { return ''; } },
-  set: (v) => { try { localStorage.setItem('rigpool-token', v); } catch { /* private mode */ } },
+  get: () => { try { return localStorage.getItem('ollabatch-token') || ''; } catch { return ''; } },
+  set: (v) => { try { localStorage.setItem('ollabatch-token', v); } catch { /* private mode */ } },
 };
 let TOKEN = document.body.dataset.token || store.get();
 let STATUS = null, INFO = null, RANGE = 60, editing = null;
@@ -114,7 +114,7 @@ function renderJobs(s) {
   const live = s.jobs.filter((j) => !['done', 'failed', 'cancelled'].includes(j.status));
   const past = s.jobs.filter((j) => ['done', 'failed', 'cancelled'].includes(j.status)).slice(-8).reverse();
   if (!s.jobs.length) {
-    patch($('jobs'), [{ key: 'empty', html: `<li class="empty">No jobs yet. ${s.templates.length ? 'Use Add job to queue one.' : 'Run <code>rigpool submit</code> on the host, or add templates to <code>rigpool.jobs.json</code> to queue jobs from here.'}</li>` }]);
+    patch($('jobs'), [{ key: 'empty', html: `<li class="empty">No jobs yet. ${s.templates.length ? 'Use Add job to queue one.' : 'Run <code>ollabatch submit</code> on the host, or add templates to <code>ollabatch.jobs.json</code> to queue jobs from here.'}</li>` }]);
     return;
   }
   patch($('jobs'), [...live, ...past].map((j) => ({ key: j.id, html: jobRow(j, s.jobs.indexOf(j), s.jobs) })));
@@ -125,7 +125,7 @@ function renderAddForm(s) {
   if (f.dataset.built === String(s.templates.length)) return;
   f.dataset.built = String(s.templates.length);
   if (!s.templates.length) {
-    f.innerHTML = '<p class="note">There are no job templates yet. Add them to <code>rigpool.jobs.json</code> where the host runs, then restart it.</p>';
+    f.innerHTML = '<p class="note">There are no job templates yet. Add them to <code>ollabatch.jobs.json</code> where the host runs, then restart it.</p>';
     return;
   }
   // "Chat calls (${count})" reads as "Chat calls (count)" until a value is picked.
@@ -213,7 +213,7 @@ function chart(svg, rows, { stacked, unit }) {
 }
 
 async function renderGraphs() {
-  const m = await call('GET', `/rp/metrics?by=card&minutes=${RANGE}`);
+  const m = await call('GET', `/ob/metrics?by=card&minutes=${RANGE}`);
   // Long ranges: 5-minute buckets keep the shape readable.
   const step = RANGE > 60 ? 5 : 1;
   const fold = (arr, mean) => {
@@ -237,7 +237,7 @@ async function renderGraphs() {
 function renderJoin() {
   const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
   const url = local && INFO?.urls?.[0] ? INFO.urls[0] : location.origin;
-  $('joinCmd').textContent = `rigpool join ${url} --password ${TOKEN}`;
+  $('joinCmd').textContent = `ollabatch join ${url} --password ${TOKEN}`;
 }
 
 async function copy(text) {
@@ -254,7 +254,7 @@ async function copy(text) {
 // ── wiring ───────────────────────────────────────────────────────────────────
 async function tick() {
   try {
-    STATUS = await call('GET', '/rp/status');
+    STATUS = await call('GET', '/ob/status');
     showGate(false);
     renderSummary(STATUS); renderJobs(STATUS); renderMachines(STATUS); renderAddForm(STATUS);
   } catch (e) {
@@ -280,7 +280,7 @@ document.addEventListener('click', async (e) => {
       b.disabled = true;
       const body = b.dataset.act === 'move' ? { index: Number(b.dataset.index) } : {};
       if (b.dataset.act === 'cancel' && !confirm('Cancel this job? Its process is stopped.')) { b.disabled = false; return; }
-      await call('POST', `/rp/jobs/${b.dataset.id}/${b.dataset.act}`, body);
+      await call('POST', `/ob/jobs/${b.dataset.id}/${b.dataset.act}`, body);
       await tick();
     } else if (b.dataset.pause) {
       b.disabled = true;
@@ -292,7 +292,7 @@ document.addEventListener('click', async (e) => {
       editing = null; await tick();
     } else if (b.dataset.log) {
       $('logTitle').textContent = `Log: ${b.dataset.name}`;
-      $('logText').textContent = await call('GET', `/rp/jobs/${b.dataset.log}/log?tail=400`) || '(empty)';
+      $('logText').textContent = await call('GET', `/ob/jobs/${b.dataset.log}/log?tail=400`) || '(empty)';
       $('logDialog').showModal();
     } else if (b.dataset.range) {
       RANGE = Number(b.dataset.range);
@@ -332,7 +332,7 @@ document.addEventListener('submit', async (e) => {
     } else if (f.id === 'addForm') {
       const params = {};
       for (const el of f.querySelectorAll('select[name^="p:"]')) params[el.name.slice(2)] = el.value;
-      await call('POST', '/rp/jobs', { template: f.template.value, params });
+      await call('POST', '/ob/jobs', { template: f.template.value, params });
       f.hidden = true; $('addToggle').setAttribute('aria-expanded', 'false');
       await tick();
     } else if (f.classList.contains('labelEdit')) {
@@ -342,7 +342,7 @@ document.addEventListener('submit', async (e) => {
         if (i < 1) throw new Error(`"${part}" should look like key=value`);
         labels[part.slice(0, i).trim()] = part.slice(i + 1).trim();
       }
-      await call('POST', '/rp/cards/labels', { card: f.dataset.card, labels });
+      await call('POST', '/ob/cards/labels', { card: f.dataset.card, labels });
       editing = null;
       await tick();
     }

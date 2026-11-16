@@ -3,7 +3,7 @@
 //
 //   node batch-prompts.mjs prompts.jsonl answers.jsonl
 //   each input line: {"prompt": "..."} or {"messages": [...]}
-// Env (set by rigpool): OLLAMA_URL, OLLAMA_MODEL. CONCURRENCY (default 4)
+// Env (set by ollabatch): OLLAMA_URL, OLLAMA_MODEL. CONCURRENCY (default 4)
 // requests in flight, so several cards stay busy.
 import fs from 'node:fs';
 

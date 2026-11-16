@@ -1,11 +1,11 @@
-# rigpool step 2: the machine agent
+# ollabatch step 2: the machine agent
 
 ## Intent
 
 Today a machine lends its GPUs by hand: quit Ollama's tray app, start one
 pinned `ollama serve` per card with the right environment variables, guess a
-slot count, type labels, and run one `rigpool join` per card. Step 2 replaces
-all of that with one program, `rigpool agent`, installed once per machine. It
+slot count, type labels, and run one `ollabatch join` per card. Step 2 replaces
+all of that with one program, `ollabatch agent`, installed once per machine. It
 finds its cards, runs and tunes their inference servers, manages a model
 cache, finds the host, and steps aside when the machine's owner wants the GPU.
 The owner controls it from a local page on that machine; the pool owner sees
@@ -17,7 +17,7 @@ Those owners must stay in charge of their own machine.
 
 ## Goals
 
-1. **Install once, runs at login.** `rigpool agent install` registers the agent
+1. **Install once, runs at login.** `ollabatch agent install` registers the agent
    to start at login for the current user, no admin rights.
 2. **Finds the host.** The host announces itself on the local network; an
    agent shows what it found and joins once given the pool password. A typed
@@ -81,7 +81,7 @@ words) at no extra disk cost on the same drive.
 ```
 machine                                  host
 ┌──────────────────────────────────┐    ┌──────────────────────────┐
-│ rigpool agent                    │    │ rigpool host             │
+│ ollabatch agent                    │    │ ollabatch host             │
 │  ├ discovery listener ◄──────────┼────┤  beacon (UDP broadcast)  │
 │  ├ hardware probes               │    │                          │
 │  ├ card supervisor ×N            │    │                          │
@@ -97,7 +97,7 @@ machine                                  host
 
 ### Agent state and config
 
-`~/.rigpool/agent/` (overridable with `--dir`):
+`~/.ollabatch/agent/` (overridable with `--dir`):
 - `config.json`: host URL, pool password, lending policy, playground path and
   limit, locked models, whether downloads are allowed, per-card overrides
   (disabled, label, extra labels).
@@ -109,22 +109,22 @@ Card id = stable string from vendor + PCI bus id (or index where no bus id).
 
 ### Install and startup
 
-`rigpool agent install` / `uninstall`, per user, no admin:
+`ollabatch agent install` / `uninstall`, per user, no admin:
 - Windows: a hidden launcher in the user's Startup folder.
-- macOS: `~/Library/LaunchAgents/dev.rigpool.agent.plist`, loaded with
+- macOS: `~/Library/LaunchAgents/dev.ollabatch.agent.plist`, loaded with
   `launchctl bootstrap gui/<uid>`.
-- Linux: `~/.config/systemd/user/rigpool-agent.service`, `systemctl --user enable --now`.
-`rigpool agent` runs it in the foreground (what the launchers call).
+- Linux: `~/.config/systemd/user/ollabatch-agent.service`, `systemctl --user enable --now`.
+`ollabatch agent` runs it in the foreground (what the launchers call).
 
 ### Discovery
 
 - The host broadcasts a beacon every 5 s on UDP port 11501:
-  `{"rigpool":1,"name":"<host machine>","url":"http://<ip>:<port>"}`. It
+  `{"ollabatch":1,"name":"<host machine>","url":"http://<ip>:<port>"}`. It
   carries no password.
 - The agent listens on 11501; the local page lists hosts found and asks for
   the pool password to join. Joining saves host URL and password to config.
 - Networks that block broadcast (guest Wi-Fi, some mesh systems) fall back to
-  typing the URL on the local page or `rigpool agent --host <url>`.
+  typing the URL on the local page or `ollabatch agent --host <url>`.
 
 ### Hardware probes
 
@@ -232,7 +232,7 @@ A check costs well under 1% of a core.
 
 ### Model playground
 
-- Folder: `~/.rigpool/agent/playground` by default; owner sets path and size
+- Folder: `~/.ollabatch/agent/playground` by default; owner sets path and size
   limit (default 50 GB).
 - The host answers `GET /pool/wants?machine=<name>` with, per card of that
   machine, the models it would be used for *(call)*: the host evaluates
@@ -298,9 +298,9 @@ Same visual language as the dashboard.
 
 ### CLI
 
-`rigpool agent [--host url] [--password pw] [--dir path] [--trusted]`,
-`rigpool agent install [--trusted] | uninstall`,
-`rigpool agent status` (prints what the local page shows).
+`ollabatch agent [--host url] [--password pw] [--dir path] [--trusted]`,
+`ollabatch agent install [--trusted] | uninstall`,
+`ollabatch agent status` (prints what the local page shows).
 
 ## Testing
 

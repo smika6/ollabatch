@@ -1,13 +1,13 @@
 {
-  "name": "rigpool",
+  "name": "ollabatch",
   "version": "0.1.0",
   "description": "Batch AI jobs across every GPU on your LAN",
   "type": "module",
-  "bin": { "rigpool": "bin/rigpool.mjs" },
+  "bin": { "ollabatch": "bin/ollabatch.mjs" },
   "scripts": { "test": "node --test" },
   "engines": { "node": ">=20" },
   "license": "MIT",
   "files": ["bin/", "src/", "examples/", "README.md", "LICENSE"],
   "keywords": ["ollama", "gpu", "llm", "batch", "queue", "homelab", "scheduler"],
-  "repository": { "type": "git", "url": "git+https://github.com/smika6/rigpool.git" }
+  "repository": { "type": "git", "url": "git+https://github.com/smika6/ollabatch.git" }
 }
