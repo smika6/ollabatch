@@ -109,10 +109,10 @@ export async function remoteSize(name, { fetch = globalThis.fetch } = {}) {
   }
 }
 
-// After a failed or killed pull: drop partial blobs and manifests whose blobs are missing.
+// After a failed or killed pull: drop manifests whose blobs are missing, so a
+// half-downloaded model never counts as present. Ollama's `-partial` blobs are
+// kept: the next pull resumes from them instead of starting over.
 export function cleanPartial(store) {
-  const blobs = path.join(store, 'blobs');
-  if (fs.existsSync(blobs)) for (const f of fs.readdirSync(blobs)) if (f.includes('-partial')) fs.rmSync(path.join(blobs, f), { force: true });
   const root = path.join(store, 'manifests', REG);
   if (!fs.existsSync(root)) return;
   for (const ns of fs.readdirSync(root)) for (const model of fs.readdirSync(path.join(root, ns))) {

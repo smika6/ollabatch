@@ -51,14 +51,23 @@ export function learnLuids(sample, serverPids) {
   return out;
 }
 
+// A card's adapter is learned only while its own server shows GPU work; a
+// paused or idle card shows none, so what was learned must be remembered.
+export function rememberLuids(remembered, learned) {
+  return { ...remembered, ...learned };
+}
+
 export function cardsInUse(sample, { luids, ownPids: own, cards }) {
   const f = sample.fg;
   const used = new Set();
   if (!f || !f.fullscreen || own.has(f.pid)) return used;
   if (SHELL_CLASSES.has(f.cls) || SHELL_EXES.has(String(f.exe).toLowerCase())) return used;
   const byLuid = Object.fromEntries(Object.entries(luids).map(([card, luid]) => [luid, card]));
-  for (const e of sample.engines || []) if (e.pid === f.pid && e.util > 0 && byLuid[e.luid]) used.add(byLuid[e.luid]);
-  if (!used.size && f.adapter) {
+  const rows = (sample.engines || []).filter((e) => e.pid === f.pid && e.util > 0);
+  for (const e of rows) if (byLuid[e.luid]) used.add(byLuid[e.luid]);
+  // The monitor's card only when the program shows no GPU work at all: work on
+  // an adapter we can't name is not evidence about the monitor's card.
+  if (!rows.length && f.adapter) {
     const card = cards.find((c) => norm(c.name) === norm(f.adapter));
     if (card) used.add(card.id);
   }

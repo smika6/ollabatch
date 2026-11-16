@@ -7,7 +7,8 @@
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
 const WINDOW_COUNT = 20;          // completions, or
-const WINDOW_MS = 3 * MIN;        // time, whichever comes first
+const WINDOW_MS = 3 * MIN;        // busy time, whichever comes first
+const MIN_COUNT = 5;              // a window with fewer completions is discarded, never judged
 const GAIN = 0.10;
 const SLOW = 0.5;
 const SLOW_FOR_MS = 3 * MIN;
@@ -41,10 +42,14 @@ export class SlotTuner {
   observe({ completed, oomErrors, freeMB, totalMB, queued }) {
     const now = this.now();
     if (this.rebase) {
-      Object.assign(this, { rebase: false, base: completed, oomBase: oomErrors, winStart: now });
+      Object.assign(this, { rebase: false, base: completed, oomBase: oomErrors, busyMs: 0, lastObs: now });
       this.history = [[now, completed]];
       return null;
     }
+    // Only time with work in flight counts toward a measurement: an idle or
+    // paused card would otherwise "measure" 0 items/s and climb or settle on it.
+    if (queued) this.busyMs += now - this.lastObs;
+    this.lastObs = now;
     if (oomErrors > this.oomBase) {
       this.oomBase = oomErrors;
       return this.#down(now, { cap: true });
@@ -54,8 +59,12 @@ export class SlotTuner {
     if (lowVram && this.slots > 1 && now - this.lastDown >= DOWN_COOLDOWN_MS) return this.#down(now, { cap: this.phase === 'measuring' });
 
     if (this.phase === 'measuring') {
-      const n = completed - this.base, elapsed = now - this.winStart;
+      const n = completed - this.base, elapsed = this.busyMs;
       if (n < WINDOW_COUNT && elapsed < WINDOW_MS) return null;
+      if (n < MIN_COUNT || elapsed <= 0) {   // too little to judge: start the window over
+        Object.assign(this, { base: completed, busyMs: 0 });
+        return null;
+      }
       const rate = n / (elapsed / 1000);
       this.rates[this.slots] = rate;
       const prev = this.rates[this.slots - 1];

@@ -9,7 +9,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function startCardWorker({
   hostUrl, password = '', ollama, slots = 2, id, label, labels = {},
-  machine = os.hostname(), hardware = null, log = () => {},
+  machine = os.hostname(), hardware = null, log = () => {}, releaseNetworkErrors = false,
 }) {
   if (!/^https?:\/\//.test(hostUrl || '')) throw new Error('needs the host URL, e.g. http://192.168.1.20:11500');
   const s = {
@@ -67,6 +67,13 @@ export async function startCardWorker({
       }
       loop.ac = null; loop.reqId = null;
       if (!result) continue;   // aborted by a pause: already released
+      // This card's own server is down (crashed, restarting): that's not the
+      // request's fault, so hand it back without spending an attempt, and wait.
+      if (result.status === 0 && releaseNetworkErrors) {
+        await release([req.id], 'card server unreachable');
+        await sleep(2000);
+        continue;
+      }
       if (result.status >= 200 && result.status < 300) {
         s.done++;
         s.recentMs.push(Date.now() - t0);

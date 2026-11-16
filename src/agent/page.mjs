@@ -15,7 +15,10 @@ const FILES = {
 };
 const LOCAL_NAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
-export function startPage({ agent, port = 11510 }) {
+// `agent` may be set later with setAgent: the CLI binds the page first, so a
+// second agent on this machine fails before it starts any GPU servers.
+export function startPage({ agent = null, port = 11510, onQuit = () => {} }) {
+  let current = agent;
   const server = http.createServer(async (req, res) => {
     const send = (status, body, type = 'application/json') => {
       res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
@@ -32,12 +35,14 @@ export function startPage({ agent, port = 11510 }) {
         const [file, type] = FILES[url.pathname];
         return send(200, fs.readFileSync(file), type);
       }
-      if (req.method === 'GET' && url.pathname === '/status') return send(200, agent.status());
+      if (req.method === 'POST' && url.pathname === '/quit') { send(200, { ok: true }); setImmediate(onQuit); return; }
+      if (!current) return send(503, { error: 'the agent is starting' });
+      if (req.method === 'GET' && url.pathname === '/status') return send(200, current.status());
       if (req.method === 'POST' && url.pathname === '/act') {
         let body = '';
         for await (const c of req) body += c;
-        await agent.act(JSON.parse(body || '{}'));
-        return send(200, agent.status());
+        await current.act(JSON.parse(body || '{}'));
+        return send(200, current.status());
       }
       return send(404, { error: 'not found' });
     } catch (e) {
@@ -46,6 +51,7 @@ export function startPage({ agent, port = 11510 }) {
   });
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, '127.0.0.1', () => resolve({ port: server.address().port, close: () => new Promise((r) => { server.closeAllConnections(); server.close(r); }) }));
+    server.listen(port, '127.0.0.1', () => resolve({ port: server.address().port, setAgent: (a) => { current = a; },
+      close: () => new Promise((r) => { server.closeAllConnections(); server.close(r); }) }));
   });
 }

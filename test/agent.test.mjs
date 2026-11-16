@@ -143,6 +143,40 @@ test('a wanted model is downloaded only when downloads are on', async () => {
   assert.ok(listModels(dl.status().playground.path).some((m) => m.name === 'tiny:1'));
 });
 
+test('a failed nvidia-smi read never adds a duplicate of an NVIDIA card', async () => {
+  const s = await host();
+  const WIN = fs.readFileSync(path.join(DATA, 'probes', 'win-adapters.json'), 'utf8');
+  let smiCalls = 0;
+  const run = async (cmd) => (cmd === 'nvidia-smi' ? (smiCalls++ === 0 ? NVSMI : null) : cmd === 'powershell' ? WIN : null);
+  const { a } = await agent(s.base, { run, platform: 'win32' });
+  await new Promise((r) => setTimeout(r, 1500));   // several ticks with nvidia-smi failing
+  const names = a.status().cards.map((c) => c.name);
+  assert.equal(names.filter((n) => n.includes('5080')).length, 1, names.join(', '));
+});
+
+test('a slow download doesn\'t freeze the agent: it keeps checking in and reporting', async () => {
+  const s = await host();
+  const { a } = await agent(s.base, { trusted: true, serverEnv: (card) => ({ FAKE_GPU: card.name, FAKE_PULL_MS: '5000' }) });
+  await waitFor(() => a.status().cards.length === 2 && a.status().cards.every((c) => c.state === 'lending'), 20_000, 'lending');
+  await job(s.call, ['tiny:1']);
+  await waitFor(() => a.status().download, 10_000, 'download started');
+  const seen = async () => (await s.call('GET', '/ob/status')).json.machines.find((m) => m.machine === 'testbox').report.seenAt;
+  const before = await seen();
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.ok(await seen() > before, 'reports kept coming during the download');
+  assert.ok(a.status().download, 'still downloading in the background');
+});
+
+test('a failed download backs off instead of retrying every tick', async () => {
+  const s = await host();
+  const { a } = await agent(s.base, { trusted: true, serverEnv: (card) => ({ FAKE_GPU: card.name, FAKE_FAIL_PULL: '1' }) });
+  await waitFor(() => a.status().cards.length === 2, 20_000, 'cards');
+  await job(s.call, ['tiny:1']);
+  await waitFor(() => a.status().downloadFailures?.['tiny:1']?.count === 1, 10_000, 'first failure');
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(a.status().downloadFailures['tiny:1'].count, 1);
+});
+
 test('the owner\'s rules are checked again right before a download', async () => {
   const s = await host();
   let agentRef = null;

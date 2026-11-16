@@ -10,7 +10,7 @@ const fx = (f) => fs.readFileSync(path.join(P, f), 'utf8');
 
 test('parseNvidiaSmi reads live stats and keeps unreported values null', () => {
   const [rtx, old] = parseNvidiaSmi(fx('nvidia-smi.csv'));
-  assert.deepEqual(rtx, { id: 'nvidia-2d000', vendor: 'nvidia', name: 'NVIDIA GeForce RTX 5080', busId: '00000000:2D:00.0', index: 0,
+  assert.deepEqual(rtx, { id: 'nvidia-2d000', source: 'nvidia-smi', vendor: 'nvidia', name: 'NVIDIA GeForce RTX 5080', busId: '00000000:2D:00.0', index: 0,
     vramMB: 16303, freeMB: 4301, util: 60, tempC: 69, powerW: 247.87, display: true, integrated: false });
   assert.equal(old.powerW, null);
   assert.equal(old.display, false);

@@ -67,18 +67,23 @@ export class CardServer extends EventEmitter {
     this.state = 'starting';
     // Try the remembered Vulkan index first, then the rest.
     const order = [this.vulkanIndex, ...this.candidates.filter((c) => c !== this.vulkanIndex)];
+    let down = false;
     for (const vk of order) {
-      const ok = await this.#launch(vk);
+      const r = await this.#launch(vk);
       if (this.stopping) return { confirmed: false, gpuName: this.gpuName };
-      if (ok) {
+      if (r === 'ok') {
         this.vulkanIndex = vk;
         this.state = 'ready';
         this.startedAt = Date.now();
         this.emit('ready');
         return { confirmed: true, gpuName: this.gpuName };
       }
+      if (r === 'down') down = true;
       await this.#kill();
     }
+    // A server that never came up (a GPU not back after a driver reset, say)
+    // gets retried; only a server that named a different GPU is misconfigured.
+    if (down) { this.#retryLater(); return { confirmed: false, gpuName: this.gpuName }; }
     this.state = 'misconfigured';
     this.log(`card ${this.card.name}: its server never picked this GPU (last saw "${this.gpuName}")`);
     return { confirmed: false, gpuName: this.gpuName };
@@ -132,18 +137,26 @@ export class CardServer extends EventEmitter {
     }
     const gpuDeadline = Date.now() + 30_000;
     while (!this.gpuName && Date.now() < gpuDeadline && child.exitCode === null) await sleep(100);
-    if (!this.gpuName) return false;
+    if (!this.gpuName) return 'down';
     const a = norm(this.gpuName), b = norm(this.card.name);
-    return a.includes(b) || b.includes(a);
+    return a.includes(b) || b.includes(a) ? 'ok' : 'mismatch';
   }
 
   #crashed() {
-    this.state = 'restarting';
     if (Date.now() - (this.startedAt || 0) >= 10 * 60_000) this.backoff = this.baseBackoff;
+    this.#retryLater(true);
+  }
+
+  #retryLater(crashed = false) {
+    this.state = 'restarting';
     const wait = this.backoff;
-    this.emit('crash', { wait });
+    if (crashed) this.emit('crash', { wait });
     this.backoff = Math.min(this.backoff * 2, this.maxBackoff);
-    this.log(`card ${this.card.name}: server exited, restarting in ${Math.round(wait / 1000)} s`);
+    this.log(`card ${this.card.name}: server ${crashed ? 'exited' : "didn't come up"}, retrying in ${Math.round(wait / 1000)} s`);
+    clearTimeout(this.timer);
     this.timer = setTimeout(() => { if (!this.stopping) this.start().catch(() => {}); }, wait);
   }
+
+  // Tests only: behave as if the running server just crashed.
+  crashForTest() { this.#crashed(); }
 }

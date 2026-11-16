@@ -88,6 +88,20 @@ test('stable id across a host restart', async () => {
   assert.deepEqual(status.workers.map((x) => x.id), ['desk-card0']);
 });
 
+test('work in flight when the card\'s server dies goes back to the pool for free', async () => {
+  const { base } = await hostAt();
+  const dying = await fake({ delayMs: 2000 });
+  const w = await card(base, dying.url, { releaseNetworkErrors: true });
+  const pending = chat(base);
+  await waitFor(() => w.stats().inflight === 1, 5000, 'in flight');
+  await dying.close();       // the server dies under the request
+  const quick = await fake();
+  const other = await pullWorker(base, { id: 'other', ollama: quick.url, token: 'secret-pw' });
+  cleanup.push(() => other.stop());
+  assert.equal((await pending).status, 200);
+  assert.equal(w.stats().failed, 0);
+});
+
 test('out-of-memory results are counted', async () => {
   const { base } = await hostAt();
   const f = await fake({ failWith: { status: 500, body: '{"error":"CUDA error: out of memory"}' } });

@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 const MB = 1024 * 1024;
 const num = (v) => { const n = Number(String(v ?? '').trim()); return Number.isFinite(n) && String(v ?? '').trim() !== '' ? n : null; };
 const shortHash = (s) => crypto.createHash('sha1').update(String(s)).digest('hex').slice(0, 6);
-const card = (c) => ({ id: '', vendor: 'other', name: '', busId: null, index: 0, vramMB: 0, freeMB: null, util: null,
+const card = (c) => ({ id: '', source: null, vendor: 'other', name: '', busId: null, index: 0, vramMB: 0, freeMB: null, util: null,
   tempC: null, powerW: null, display: null, integrated: false, ...c });
 
 export const NVIDIA_QUERY = ['--query-gpu=index,pci.bus_id,name,memory.total,memory.free,utilization.gpu,temperature.gpu,power.draw,display_active',
@@ -38,7 +38,7 @@ export function parseNvidiaSmi(csv) {
     const [index, busId, name, total, free, util, temp, power, display] = line.split(',').map((x) => x.trim());
     const bus = busId.split(':').slice(-2).join('').replace(/\W/g, '').toLowerCase();
     const t = num(temp);
-    return card({ id: `nvidia-${bus || index}`, vendor: 'nvidia', name, busId, index: Number(index), vramMB: num(total) ?? 0,
+    return card({ id: `nvidia-${bus || index}`, source: 'nvidia-smi', vendor: 'nvidia', name, busId, index: Number(index), vramMB: num(total) ?? 0,
       freeMB: num(free), util: num(util), tempC: t == null ? null : Math.round(t), powerW: num(power),
       display: display === 'Enabled' ? true : display === 'Disabled' ? false : null });
   });
@@ -51,7 +51,7 @@ export function parseWindowsAdapters(json) {
     const vendor = vendorOf(`${a.AdapterCompatibility} ${a.Name}`);
     const bytes = num(a.qwMemorySize) ?? num(a.AdapterRAM) ?? 0;
     const vramMB = Math.round(bytes / MB);
-    return card({ id: `${vendor}-${shortHash(a.PNPDeviceID || a.Name)}`, vendor, name: a.Name, index, vramMB, integrated: vramMB < 4096 });
+    return card({ id: `${vendor}-${shortHash(a.PNPDeviceID || a.Name)}`, source: 'windows', vendor, name: a.Name, index, vramMB, integrated: vramMB < 4096 });
   });
 }
 
@@ -59,7 +59,7 @@ export function parseMacDisplays(json, memBytes) {
   let doc;
   try { doc = JSON.parse(json); } catch { return []; }
   return (doc.SPDisplaysDataType || []).slice(0, 1).map((g, index) => card({
-    id: `apple-${index}`, vendor: 'apple', name: g.sppci_model || g._name, index, vramMB: Math.round(memBytes / MB),
+    id: `apple-${index}`, source: 'system_profiler', vendor: 'apple', name: g.sppci_model || g._name, index, vramMB: Math.round(memBytes / MB),
   }));
 }
 
@@ -72,7 +72,7 @@ export function parseRocmSmi(json) {
     const t = num(v['Temperature (Sensor edge) (C)']);
     const index = Number(k.slice(4));
     const vramMB = total == null ? 0 : Math.round(total / MB);
-    return card({ id: `amd-${index}`, vendor: 'amd', name: v['Card series'] || v['Card model'] || k, index, vramMB,
+    return card({ id: `amd-${index}`, source: 'rocm-smi', vendor: 'amd', name: v['Card series'] || v['Card model'] || k, index, vramMB,
       freeMB: total != null && used != null ? Math.round((total - used) / MB) : null,
       util: num(v['GPU use (%)']), tempC: t == null ? null : Math.round(t), integrated: vramMB < 4096 });
   });
@@ -93,7 +93,7 @@ export function parseXpuSmi(discoveryJson, statsJsons = []) {
     const m = stats.get(d.device_id) || {};
     const used = m.XPUM_STATS_MEMORY_USED;
     const bus = String(d.pci_bdf_address || '').split(':').slice(-2).join('').replace(/\W/g, '').toLowerCase();
-    return card({ id: `intel-${bus || d.device_id}`, vendor: 'intel', name: d.device_name, busId: d.pci_bdf_address || null,
+    return card({ id: `intel-${bus || d.device_id}`, source: 'xpu-smi', vendor: 'intel', name: d.device_name, busId: d.pci_bdf_address || null,
       index: d.device_id, vramMB, freeMB: used == null ? null : vramMB - Math.round(used / MB),
       util: m.XPUM_STATS_GPU_UTILIZATION ?? null, tempC: m.XPUM_STATS_GPU_CORE_TEMPERATURE ?? null,
       powerW: m.XPUM_STATS_POWER ?? null, integrated: vramMB < 4096 });

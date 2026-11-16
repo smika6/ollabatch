@@ -19,7 +19,10 @@
   $tar = Join-Path $env:TEMP 'ollabatch.tar'
   Write-Host "Downloading ollabatch from $hostUrl ..."
   Invoke-WebRequest "$hostUrl/ollabatch.tar" -OutFile $tar -UseBasicParsing
-  tar -xf $tar -C $app
+  # Windows' own tar: a Git or MSYS tar earlier on PATH can't read C:\ paths.
+  $winTar = Join-Path $env:SystemRoot 'System32\tar.exe'
+  if (-not (Test-Path $winTar)) { $winTar = 'tar' }
+  & $winTar -xf $tar -C $app
   Remove-Item $tar
   & node (Join-Path $app 'bin\ollabatch.mjs') install
   Write-Host 'Done. ollabatch runs at login; its page opens now so you can lend this PC.' -ForegroundColor Green

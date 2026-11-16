@@ -9,14 +9,17 @@ import { detectCards, cardLabels, execRun } from './probes.mjs';
 import { CardServer, pickPorts, isPortFree } from './server.mjs';
 import { SlotTuner } from './tuner.mjs';
 import { LendPolicy } from './policy.mjs';
-import { startWatcher, learnLuids, ownPids, cardsInUse } from './inuse.mjs';
+import { startWatcher, learnLuids, ownPids, cardsInUse, rememberLuids } from './inuse.mjs';
 import { listModels, linkModel, removeModel, usage, planEviction, remoteSize, cleanPartial } from './playground.mjs';
 import { loadConfig, saveConfig } from './config.mjs';
 import { readJson, writeJsonAtomic } from '../state.mjs';
 import { startCardWorker } from '../card-worker.mjs';
 import { listenBeacons, BEACON_PORT } from '../discovery.mjs';
+import { recordServers, reapRecorded } from './reap.mjs';
 
 const GB = 1024 ** 3, MB = 1024 ** 2;
+const STALL_MS = 120_000;                 // a download with no progress this long is abandoned
+const RETRY_BASE_MS = 10 * 60_000, RETRY_MAX_MS = 6 * 60 * 60_000;
 const VERSION = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
 
 export async function startAgent({
@@ -28,6 +31,9 @@ export async function startAgent({
   watcher = startWatcher, fetchRegistry = globalThis.fetch, log = () => {},
 } = {}) {
   fs.mkdirSync(dir, { recursive: true });
+  const serversFile = path.join(dir, 'servers.json');
+  const reaped = await reapRecorded({ file: serversFile });
+  if (reaped.length) log(`stopped ${reaped.length} Ollama server(s) a previous agent left running`);
   const cfg = loadConfig(dir, { trusted });
   if (host) cfg.host = host.replace(/\/+$/, '');
   if (password) cfg.password = password;
@@ -38,7 +44,9 @@ export async function startAgent({
   const policy = new LendPolicy({ now });
   const cards = new Map();   // cardId → { card, server, worker, tuner, state, reason, version }
   let inUse = new Set();
+  let luids = {};   // cardId → adapter LUID, remembered across samples
   let download = null;
+  const failures = {};   // model → { count, until }: downloads back off after failing
   let closed = false;
 
   const cardCfg = (id) => (cfg.cards[id] ??= {});
@@ -50,9 +58,13 @@ export async function startAgent({
     platform,
     onSample: (sample) => {
       const pids = Object.fromEntries([...cards].filter(([, c]) => c.server?.child?.pid).map(([id, c]) => [id, c.server.child.pid]));
-      inUse = cardsInUse(sample, { luids: learnLuids(sample, pids), ownPids: ownPids(sample, pids), cards: [...cards.values()].map((c) => c.card) });
+      luids = rememberLuids(luids, learnLuids(sample, pids));
+      inUse = cardsInUse(sample, { luids, ownPids: ownPids(sample, pids), cards: [...cards.values()].map((c) => c.card) });
     },
   });
+
+  const record = () => recordServers(serversFile,
+    Object.fromEntries([...cards].filter(([, c]) => c.server?.child?.pid).map(([id, c]) => [id, c.server.child.pid])));
 
   async function ensureServer(c) {
     if (c.server || c.card.integrated || cardCfg(c.card.id).disabled) return;
@@ -65,7 +77,7 @@ export async function startAgent({
       extraEnv: { OLLAMA_NOPRUNE: '1', ...serverEnv(c.card) },
     });
     c.server.on('crash', () => { c.tuner?.onRestart(); c.worker?.setPaused(true, 'restarting'); });
-    c.server.on('ready', () => { c.tuner?.onRestart(); });
+    c.server.on('ready', () => { c.tuner?.onRestart(); record(); });
     const r = await c.server.start();
     if (!r.confirmed) return;
     try { c.version = (await (await fetch(`${c.server.url}/api/version`)).json()).version; } catch { c.version = null; }
@@ -83,6 +95,7 @@ export async function startAgent({
       if (cardCfg(id).disabled) { Object.assign(c, { state: 'disabled', reason: 'lending turned off for this card' }); if (c.worker) await c.worker.setPaused(true, 'disabled'); continue; }
       if (!c.server || c.server.state !== 'ready') {
         Object.assign(c, { state: c.server?.state || 'starting', reason: c.server?.state === 'misconfigured' ? `its server never picked this GPU (saw "${c.server.gpuName}")` : null });
+        if (c.worker) await c.worker.setPaused(true, 'restarting');   // never lease work to a dead port
         continue;
       }
       if (!cfg.host) { Object.assign(c, { state: 'not-joined', reason: 'not joined to a pool yet' }); continue; }
@@ -95,14 +108,17 @@ export async function startAgent({
       if (!c.worker) {
         try {
           c.worker = await startCardWorker({ hostUrl: cfg.host, password: cfg.password || '', ollama: c.server.url, slots: c.server.slots,
-            id: workerId(id), label: c.card.name, machine, log,
+            id: workerId(id), label: c.card.name, machine, log, releaseNetworkErrors: true,
             labels: { ...cardLabels(c.card), ...(cardCfg(id).labels || {}) },
             hardware: { name: c.card.name, vendor: c.card.vendor, vramMB: c.card.vramMB } });
         } catch (e) { Object.assign(c, { state: 'not-joined', reason: `can't reach the host: ${e.message}` }); continue; }
-      } else {
+      } else if (c.pausedFor) {
+        c.tuner?.onRestart();   // a fresh measurement after a pause
         await c.worker.setPaused(false);
       }
+      c.pausedFor = null;
     }
+    for (const c of cards.values()) if (c.state !== 'lending' && c.worker) c.pausedFor = c.state;
   }
 
   async function tune() {
@@ -112,10 +128,11 @@ export async function startAgent({
       const act = c.tuner.observe({ completed: st.done, oomErrors: st.oomErrors, freeMB: c.card.freeMB, totalMB: c.card.vramMB, queued: st.inflight > 0 });
       if (act) {
         await c.worker.setPaused(true, 'retuning');
-        await c.server.restart(act.setSlots);
+        const r = await c.server.restart(act.setSlots);
         await c.worker.setSlots(act.setSlots);
         c.tuner.onRestart();
-        await c.worker.setPaused(false);
+        if (r.confirmed) await c.worker.setPaused(false);
+        else c.pausedFor = 'restarting';   // the next apply() resumes it once the server is back
       }
       if (c.tuner.phase !== 'measuring' && tunings[id]?.measuredAt !== c.tuner.measuredAt) {
         tunings[id] = c.tuner.toJSON();
@@ -150,6 +167,7 @@ export async function startAgent({
           continue;
         }
         if (!pg.downloads) continue;
+        if (failures[model] && now() < failures[model].until) continue;   // backing off after a failed try
         const size = await remoteSize(model, { fetch: fetchRegistry });
         if (size == null || size + GB > c.card.vramMB * MB) continue;
         if (!cfg.playground.downloads) continue;   // the owner may have changed their mind meanwhile
@@ -157,12 +175,15 @@ export async function startAgent({
         const plan = planEviction({ models: usage(pg.path, all).models, needBytes: size, limitBytes: pg.limitGB * GB,
           usedBytes: usage(pg.path, all).usedBytes, locked: new Set(pg.locked), inUse: wanted, lastUsed: pg.lastUsed });
         if (!plan) continue;
+        if (!diskHas(size + 2 * GB)) { log(`! not enough free disk for ${model}`); continue; }
         for (const name of plan) {
           if (cfg.playground.locked.includes(name) || wanted.has(name)) continue;
           await del(c, name);
         }
-        await pull(c, model, size);
-        await refreshAll();
+        // In the background: a long download must not stop the agent's checks
+        // (a game starting, the owner pausing) or its reports.
+        download = { model, completed: 0, total: size };
+        pull(c, model).then(refreshAll).catch(() => {});
         return;   // one download at a time
       }
     }
@@ -173,21 +194,50 @@ export async function startAgent({
     catch { removeModel(cfg.playground.path, name); }
   }
 
-  async function pull(c, model, size) {
-    download = { model, completed: 0, total: size };
+  function diskHas(bytes) {
     try {
-      const r = await fetch(`${c.server.url}/api/pull`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, stream: true }) });
-      const text = await r.text();
-      for (const line of text.split('\n').filter(Boolean)) {
-        const m = JSON.parse(line);
-        if (m.error) throw new Error(m.error);
-        if (m.completed) download.completed = m.completed;
+      fs.mkdirSync(cfg.playground.path, { recursive: true });
+      const s = fs.statfsSync(cfg.playground.path);
+      return s.bavail * s.bsize >= bytes;
+    } catch { return true; }   // can't tell here: let Ollama report a full disk
+  }
+
+  async function pull(c, model) {
+    const ac = new AbortController();
+    let stall = null;
+    const arm = () => { clearTimeout(stall); stall = setTimeout(() => ac.abort(), STALL_MS); };
+    try {
+      arm();
+      const r = await fetch(`${c.server.url}/api/pull`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, stream: true }), signal: ac.signal });
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '', ok = false;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        arm();
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines.filter(Boolean)) {
+          const m = JSON.parse(line);
+          if (m.error) throw new Error(m.error);
+          if (m.completed) download.completed = m.completed;
+          if (m.status === 'success') ok = true;
+        }
       }
+      if (!ok) throw new Error('the download ended before it finished');
+      delete failures[model];
       log(`downloaded ${model}`);
     } catch (e) {
-      log(`! download of ${model} failed: ${e.message}`);
-      cleanPartial(cfg.playground.path);
+      const f = (failures[model] ??= { count: 0, until: 0 });
+      f.count++;
+      f.until = now() + Math.min(RETRY_BASE_MS * 2 ** (f.count - 1), RETRY_MAX_MS);
+      log(`! download of ${model} failed (${ac.signal.aborted ? 'stalled' : e.message}); next try in ${Math.round((f.until - now()) / 60_000)} min`);
+      cleanPartial(cfg.playground.path);   // drops half-written manifests; keeps Ollama's partial blobs so a retry resumes
     } finally {
+      clearTimeout(stall);
       download = null;
     }
   }
@@ -223,7 +273,13 @@ export async function startAgent({
     if (ticking || closed) return;
     ticking = true;
     try {
-      const found = await detectCards({ run, platform });
+      let found = await detectCards({ run, platform });
+      // Once nvidia-smi has named the NVIDIA cards, a moment it fails (a driver
+      // reset, early boot) must not let the Windows list add them again under
+      // another id: that would start a second server on the same GPU.
+      if ([...cards.values()].some((c) => c.card.source === 'nvidia-smi')) {
+        found = found.filter((c) => c.vendor !== 'nvidia' || c.source === 'nvidia-smi');
+      }
       found.forEach((card, index) => {
         const c = cards.get(card.id);
         if (c) c.card = card; else cards.set(card.id, { card, index, server: null, worker: null, tuner: null, state: 'starting', reason: null });
@@ -246,7 +302,7 @@ export async function startAgent({
   const api = {
     status() {
       const r = report();
-      return { ...r, host: cfg.host, joined: !!cfg.host, schedule: cfg.schedule, hostsFound: [...beacons.hosts().values()],
+      return { ...r, host: cfg.host, joined: !!cfg.host, schedule: cfg.schedule, hostsFound: [...beacons.hosts().values()], downloadFailures: { ...failures },
         cards: r.cards.map((c) => ({ ...c, paused: !!cardCfg(c.id).paused, disabled: !!cardCfg(c.id).disabled, labels: cardCfg(c.id).labels || {} })) };
     },
     async act(a) {

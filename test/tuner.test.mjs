@@ -95,6 +95,25 @@ test('a restart is not a slowdown', () => {
   assert.equal(s.t.observe({ completed: 0, oomErrors: 0, freeMB: 8000, totalMB: TOTAL, queued: true }), null);
 });
 
+test('an idle card never climbs: no work, no measurement', () => {
+  const s = sim({ rate: () => 0, queued: () => false });
+  s.run(60 * MIN);
+  assert.equal(s.t.slots, 1);
+  assert.equal(s.t.phase, 'measuring');
+  assert.deepEqual(s.changes, []);
+});
+
+test('a long pause inside a measuring window does not settle the card low', () => {
+  let paused = false;
+  const s = sim({ rate: (slots) => (paused ? 0 : table({ 1: 1.0, 2: 1.8, 3: 2.05, 4: 2.1 })(slots)), queued: () => !paused });
+  s.run(10_000 * 2);   // a little measuring at 1 slot
+  paused = true;
+  s.run(30 * MIN);
+  paused = false;
+  s.run(30 * MIN);
+  assert.equal(s.t.slots, 3);
+});
+
 test('caps at 8 slots', () => {
   const s = sim({ rate: (slots) => slots });
   s.run(60 * MIN);

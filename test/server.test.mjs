@@ -75,6 +75,23 @@ test('a crash restarts with growing backoff', async () => {
   assert.deepEqual(waits.slice(0, 2), [150, 300]);
 });
 
+test('a relaunch that fails (GPU not back yet) keeps retrying instead of giving up', async () => {
+  const flag = path.join(tmp(), 'down');
+  const s = server(RTX, { FAKE_GPU: 'NVIDIA GeForce RTX 5080', FAKE_FAIL_START_FILE: flag }, { port: await freePort(), backoffMs: 150 });
+  await s.start();
+  fs.writeFileSync(flag, '1');   // from now on the server dies at start
+  let readies = 0;
+  s.on('ready', () => readies++);
+  await s.stop(); s.stopping = false;
+  s.crashForTest();
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.notEqual(s.state, 'misconfigured');
+  fs.rmSync(flag);
+  const end = Date.now() + 15_000;
+  while (readies < 1 && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
+  assert.equal(s.state, 'ready');
+});
+
 test('restart(slots) brings the server back with the new parallel count', async () => {
   const s = server(RTX, { FAKE_GPU: 'NVIDIA GeForce RTX 5080' }, { port: await freePort() });
   await s.start();

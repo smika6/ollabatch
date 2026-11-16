@@ -12,6 +12,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 const env = process.env;
+// FAKE_FAIL_START_FILE: while that file exists, die at start (a GPU not back after a driver reset).
+if (env.FAKE_FAIL_START_FILE && fs.existsSync(env.FAKE_FAIL_START_FILE)) process.exit(3);
 const [hostName, port] = (env.OLLAMA_HOST || '127.0.0.1:11434').split(':');
 const parallel = Math.max(1, Number(env.OLLAMA_NUM_PARALLEL) || 1);
 const store = env.OLLAMA_MODELS || path.join(process.cwd(), '.fake-models');
@@ -54,6 +56,7 @@ const server = http.createServer((req, res) => {
       fs.mkdirSync(blobs, { recursive: true });
       res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
       res.write(`${JSON.stringify({ status: 'pulling', digest, total: size, completed: Math.floor(size / 2) })}\n`);
+      if (env.FAKE_PULL_MS) await new Promise((r) => setTimeout(r, Number(env.FAKE_PULL_MS)));
       if (env.FAKE_FAIL_PULL === '1') {
         fs.writeFileSync(path.join(blobs, `${digest.replace(':', '-')}-partial`), data.subarray(0, size / 2));
         res.end(`${JSON.stringify({ error: 'connection reset' })}\n`);

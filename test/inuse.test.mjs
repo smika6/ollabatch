@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { learnLuids, ownPids, cardsInUse } from '../src/agent/inuse.mjs';
+import { learnLuids, ownPids, cardsInUse, rememberLuids } from '../src/agent/inuse.mjs';
 
 // Shapes from a live sample on a PC with an RTX 5080 (CUDA, compute engine)
 // and an Arc A770 (Vulkan, 3D engine), each running one of the agent's servers.
@@ -48,6 +48,19 @@ test('the desktop, taskbar and lock screen are not fullscreen programs', () => {
     const s = sample(f);
     assert.equal(cardsInUse(s, ctx(s)).size, 0, f.cls);
   }
+});
+
+test('a paused card is still recognised by its remembered adapter', () => {
+  const remembered = rememberLuids({}, learnLuids(sample(null), SERVERS));
+  // Later: both runners idle (the Arc is paused), a game renders on the Arc.
+  const later = { fg: fg(), engines: [{ pid: 5000, luid: ARC, engtype: '3d', util: 70 }], procs };
+  const luids = rememberLuids(remembered, learnLuids(later, SERVERS));
+  assert.deepEqual([...cardsInUse(later, { luids, ownPids: ownPids(later, SERVERS), cards: CARDS })], ['intel-963936']);
+});
+
+test('game work on an adapter no card is known for never blames the monitor\'s card', () => {
+  const s = { fg: fg(), engines: [{ pid: 5000, luid: '0x00000000_0x0000beef', engtype: '3d', util: 70 }], procs };
+  assert.equal(cardsInUse(s, { luids: { 'nvidia-2d000': NV }, ownPids: new Set(), cards: CARDS }).size, 0);
 });
 
 test('no foreground window → nothing in use', () => {

@@ -41,6 +41,19 @@ test('an action from this machine reaches the agent', async () => {
   assert.deepEqual(acts.at(-1), { type: 'pause', card: 'nvidia-1' });
 });
 
+test('POST /quit asks the agent to stop (how install replaces a running agent)', async () => {
+  let quit = 0;
+  const p = await startPage({ agent: null, port: 0, onQuit: () => { quit++; } });
+  try {
+    const r = await fetch(`http://127.0.0.1:${p.port}/status`);
+    assert.equal(r.status, 503, 'not ready before the agent is set');
+    p.setAgent(agent);
+    assert.equal((await fetch(`http://127.0.0.1:${p.port}/status`)).status, 200);
+    assert.equal((await fetch(`http://127.0.0.1:${p.port}/quit`, { method: 'POST' })).status, 200);
+    assert.equal(quit, 1);
+  } finally { await p.close(); }
+});
+
 test('joining from a link needs a click: the page never acts from the address alone', () => {
   const js = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'agent', 'page', 'app.js'), 'utf8');
   const hashHandler = js.slice(js.indexOf('function readJoinLink'), js.indexOf('// end readJoinLink'));

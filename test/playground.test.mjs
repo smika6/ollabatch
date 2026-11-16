@@ -91,7 +91,8 @@ test('a failed pull leaves the cache consistent', () => {
   fs.writeFileSync(path.join(dir, 'latest'), JSON.stringify({ config: { digest: 'sha256:missing', size: 5 }, layers: [] }));
   cleanPartial(pg);
   assert.deepEqual(listModels(pg).map((m) => m.name), ['good:1']);
-  assert.equal(fs.existsSync(path.join(pg, 'blobs', 'sha256-abc-partial')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'latest')), false, 'the broken manifest is gone');
+  assert.equal(fs.existsSync(path.join(pg, 'blobs', 'sha256-abc-partial')), true, 'the partial blob stays so a retry resumes');
 });
 
 test('remoteSize sums a registry manifest', async () => {
