@@ -1,4 +1,5 @@
 // ollabatch dashboard: polls /ob/status every 2 s and /ob/metrics every 30 s.
+import { hardwareMeta, ownerHolds, ownerText, idleBayHtml, playgroundLine } from './view.mjs';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const store = {
@@ -142,7 +143,9 @@ function renderAddForm(s) {
 }
 
 // ── machines ─────────────────────────────────────────────────────────────────
-function bay(c, jobs) {
+function bay(c, jobs, report) {
+  const hw = report?.cards?.find((x) => x.workerId === c.id);
+  const held = ownerHolds(c.owner);
   const state = !c.active ? 'gone' : c.paused ? 'paused' : c.inflight ? 'working' : 'idle';
   const leds = Array.from({ length: c.slots }, (_, i) => `<i class="${i < c.inflight ? 'on' : ''}"></i>`).join('');
   const job = c.jobId && c.jobId !== '_' ? jobs.find((j) => j.id === c.jobId) : null;
@@ -162,10 +165,12 @@ function bay(c, jobs) {
   return `<div class="bay ${state}">
     <div class="top1"><span class="label">${esc(c.label || c.id)}</span><span class="leds" title="${c.inflight} of ${c.slots} slots busy">${leds}</span></div>
     <div class="meta">${meta.map((m) => `<span>${esc(m)}</span>`).join('')}</div>
+    ${hw ? `<div class="meta">${hardwareMeta(hw).map((m) => `<span>${esc(m)}</span>`).join('')}</div>` : ''}
+    ${held ? `<div class="note">${esc(ownerText(c.owner))}</div>` : ''}
     <div class="chips">${c.models.map((m) => `<span class="chip">${esc(m)}</span>`).join('')}${chips}</div>
     ${c.lastError ? `<div class="err">Last error: ${esc(c.lastError)}</div>` : ''}
     ${edit}
-    ${c.active ? `<div class="acts"><button data-pause="${esc(c.id)}" data-to="${c.paused ? '0' : '1'}">${c.paused ? 'Resume card' : 'Pause card'}</button><button data-edit="${esc(c.id)}">Edit labels</button></div>` : ''}
+    ${c.active ? `<div class="acts">${held ? '' : `<button data-pause="${esc(c.id)}" data-to="${c.paused ? '0' : '1'}">${c.paused ? 'Resume card' : 'Pause card'}</button>`}<button data-edit="${esc(c.id)}">Edit labels</button></div>` : ''}
   </div>`;
 }
 
@@ -177,7 +182,13 @@ function renderMachines(s) {
   }
   patch($('machines'), s.machines.map((m) => {
     const on = m.cards.filter((c) => c.active).length;
-    return { key: m.machine, html: `<div class="shelf"><h3>${esc(m.machine)}<span>${on} of ${m.cards.length} card${m.cards.length === 1 ? '' : 's'} online</span></h3>${m.cards.map((c) => bay(c, s.jobs)).join('')}</div>` };
+    const lentIds = new Set(m.cards.map((c) => c.id));
+    const idle = (m.report?.cards || []).filter((r) => !r.workerId || !lentIds.has(r.workerId));
+    const total = m.cards.length + idle.length;
+    const pg = playgroundLine(m.report);
+    return { key: m.machine, html: `<div class="shelf"><h3>${esc(m.machine)}<span>${on} of ${total} card${total === 1 ? '' : 's'} lending</span></h3>
+      ${pg ? `<p class="note shelf-note">${esc(pg)}</p>` : ''}
+      ${m.cards.map((c) => bay(c, s.jobs, m.report)).join('')}${idle.map(idleBayHtml).join('')}</div>` };
   }));
 }
 

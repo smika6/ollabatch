@@ -36,7 +36,7 @@ const INFERENCE = /^\/api\/(chat|generate|show|embed|embeddings)$/;
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const LOCAL_NAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
-const STATIC = { '/app.js': 'text/javascript', '/style.css': 'text/css' };
+const STATIC = { '/app.js': 'text/javascript', '/view.mjs': 'text/javascript', '/style.css': 'text/css' };
 const JOB_ACTIONS = new Set(['move', 'pause', 'resume', 'cancel', 'rerun']);
 
 class HttpError extends Error {
