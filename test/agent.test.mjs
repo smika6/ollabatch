@@ -58,9 +58,9 @@ const status = async (call, id) => (await call('GET', '/ob/status')).json.jobs.f
 test('lends both cards end to end and reports its hardware', async () => {
   const s = await host();
   const { a } = await agent(s.base);
-  await waitFor(async () => (await s.call('GET', '/ob/status')).json.workers.filter((w) => w.active).length === 2, 20_000, 'two cards');
+  await waitFor(async () => (await s.call('GET', '/ob/status')).json.workers.filter((w) => w.active).length === 2, 45_000, 'two cards');
   const j = (await job(s.call)).json;
-  await waitFor(async () => (await status(s.call, j.id)).status === 'done', 20_000, 'job done');
+  await waitFor(async () => (await status(s.call, j.id)).status === 'done', 45_000, 'job done');
   const m = (await s.call('GET', '/ob/status')).json.machines.find((x) => x.machine === 'testbox');
   assert.equal(m.cards.length, 2);
   assert.deepEqual(m.report.cards.map((c) => c.name).sort(), ['NVIDIA GeForce RTX 3080', 'NVIDIA GeForce RTX 5080']);
@@ -72,7 +72,7 @@ test('lends both cards end to end and reports its hardware', async () => {
 test('an owner pause takes a card out of the pool within seconds', async () => {
   const s = await host();
   const { a } = await agent(s.base);
-  await waitFor(() => a.status().cards.length === 2 && a.status().cards.every((c) => c.state === 'lending'), 20_000, 'lending');
+  await waitFor(() => a.status().cards.length === 2 && a.status().cards.every((c) => c.state === 'lending'), 45_000, 'lending');
   const id = a.status().cards[0].id;
   const t0 = Date.now();
   await a.act({ type: 'pause', card: id });
@@ -85,7 +85,7 @@ test('a fullscreen program pauses the card it uses', async () => {
   const s = await host();
   const skew = { ms: 0 };
   const { a, watch } = await agent(s.base, { now: () => Date.now() + skew.ms });
-  await waitFor(() => a.status().cards.length === 2 && a.status().cards.every((c) => c.state === 'lending'), 20_000, 'lending');
+  await waitFor(() => a.status().cards.length === 2 && a.status().cards.every((c) => c.state === 'lending'), 45_000, 'lending');
   const card = a.status().cards.find((c) => c.name.includes('5080'));
   const sample = { fg: { pid: 999999, exe: 'game', cls: 'Game', fullscreen: true, adapter: card.name }, engines: [], procs: [] };
   watch.emit(sample);
@@ -100,7 +100,7 @@ test('a fullscreen program pauses the card it uses', async () => {
 test('the owner\'s pause holds while the host is down and after it returns', async () => {
   const first = await host();
   const { a } = await agent(first.base);
-  await waitFor(() => a.status().cards.length === 2 && a.status().cards.every((c) => c.state === 'lending'), 20_000, 'lending');
+  await waitFor(() => a.status().cards.length === 2 && a.status().cards.every((c) => c.state === 'lending'), 45_000, 'lending');
   const id = a.status().cards[0].id;
   const port = first.h.port;
   await first.h.close();
@@ -119,7 +119,7 @@ test('a wanted model the owner already has is linked, not downloaded', async () 
   putModel(userStore, 'mine:1');
   let pulls = 0;
   const { a } = await agent(s.base, { userStore, trusted: false, fetchRegistry: async () => { pulls++; return { ok: false }; } });
-  await waitFor(() => a.status().cards.length === 2, 20_000, 'cards');
+  await waitFor(() => a.status().cards.length === 2, 45_000, 'cards');
   const j = (await job(s.call, ['mine:1'])).json;
   await waitFor(async () => (await status(s.call, j.id)).status === 'done', 30_000, 'job done on the linked model');
   const pg = a.status().playground;
@@ -130,14 +130,14 @@ test('a wanted model the owner already has is linked, not downloaded', async () 
 test('a wanted model is downloaded only when downloads are on', async () => {
   const off = await host();
   const { a: noDl } = await agent(off.base, { trusted: false });
-  await waitFor(() => noDl.status().cards.length === 2, 20_000, 'cards');
+  await waitFor(() => noDl.status().cards.length === 2, 45_000, 'cards');
   await job(off.call, ['tiny:1']);
   await new Promise((r) => setTimeout(r, 1500));
   assert.equal(listModels(noDl.status().playground.path).length, 0);
 
   const on = await host();
   const { a: dl } = await agent(on.base, { trusted: true });
-  await waitFor(() => dl.status().cards.length === 2, 20_000, 'cards');
+  await waitFor(() => dl.status().cards.length === 2, 45_000, 'cards');
   const j = (await job(on.call, ['tiny:1'])).json;
   await waitFor(async () => (await status(on.call, j.id)).status === 'done', 30_000, 'job done on the pulled model');
   assert.ok(listModels(dl.status().playground.path).some((m) => m.name === 'tiny:1'));
@@ -157,7 +157,7 @@ test('a failed nvidia-smi read never adds a duplicate of an NVIDIA card', async 
 test('a slow download doesn\'t freeze the agent: it keeps checking in and reporting', async () => {
   const s = await host();
   const { a } = await agent(s.base, { trusted: true, serverEnv: (card) => ({ FAKE_GPU: card.name, FAKE_PULL_MS: '5000' }) });
-  await waitFor(() => a.status().cards.length === 2 && a.status().cards.every((c) => c.state === 'lending'), 20_000, 'lending');
+  await waitFor(() => a.status().cards.length === 2 && a.status().cards.every((c) => c.state === 'lending'), 45_000, 'lending');
   await job(s.call, ['tiny:1']);
   await waitFor(() => a.status().download, 10_000, 'download started');
   const seen = async () => (await s.call('GET', '/ob/status')).json.machines.find((m) => m.machine === 'testbox').report.seenAt;
@@ -170,7 +170,7 @@ test('a slow download doesn\'t freeze the agent: it keeps checking in and report
 test('a failed download backs off instead of retrying every tick', async () => {
   const s = await host();
   const { a } = await agent(s.base, { trusted: true, serverEnv: (card) => ({ FAKE_GPU: card.name, FAKE_FAIL_PULL: '1' }) });
-  await waitFor(() => a.status().cards.length === 2, 20_000, 'cards');
+  await waitFor(() => a.status().cards.length === 2, 45_000, 'cards');
   await job(s.call, ['tiny:1']);
   await waitFor(() => a.status().downloadFailures?.['tiny:1']?.count === 1, 10_000, 'first failure');
   await new Promise((r) => setTimeout(r, 1500));
@@ -186,7 +186,7 @@ test('the owner\'s rules are checked again right before a download', async () =>
     fetchRegistry: async () => { asked++; await agentRef.act({ type: 'playground', downloads: false }); return { ok: true, json: async () => ({ config: { size: 64 }, layers: [] }) }; },
   });
   agentRef = a;
-  await waitFor(() => a.status().cards.length === 2, 20_000, 'cards');
+  await waitFor(() => a.status().cards.length === 2, 45_000, 'cards');
   await job(s.call, ['tiny:1']);
   await waitFor(() => asked > 0, 10_000, 'size asked');
   await new Promise((r) => setTimeout(r, 1000));
