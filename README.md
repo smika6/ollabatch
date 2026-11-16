@@ -53,6 +53,10 @@ node ../bin/rigpool.mjs ls
 
 `npm link` in the repo puts `rigpool` on your PATH.
 
+**Step-by-step for a house of machines** (a Mac hosting, Windows PCs with one
+or several GPUs joining, pinning one Ollama per card, keeping things awake):
+[docs/home-setup.md](docs/home-setup.md).
+
 ## How it works
 
 A job is a command that runs **on the host**. rigpool points it at its own
@@ -135,6 +139,9 @@ rigpool join   <host-url> --password pw [--ollama url] [--slots 2] [--label name
 rigpool submit [--host url] --name n [--model m]... [--any-model] [--select selector] [--cwd dir] [--shell] -- <command> [args...]
 rigpool ls | move <job> <index> | pause | resume | cancel | rerun <job> | log <job> [--tail 200]
 ```
+
+`submit`, `ls` and the job commands talk to `--host` (default
+`http://127.0.0.1:11500`); from another machine add `--password`.
 
 ## Roadmap
 
