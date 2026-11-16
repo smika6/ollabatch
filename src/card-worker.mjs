@@ -115,6 +115,11 @@ export async function startCardWorker({
       for (const l of now.slice(n)) l.stop = true;   // finish the current request, then exit
       try { await register(); } catch { /* next beat */ }
     },
+    // After a model is linked or pulled: tell the host now, not at the next heartbeat.
+    async refreshModels() {
+      try { s.models = await ollamaModels(s.ollama); await register(); } catch { /* next beat */ }
+    },
+    models: () => [...s.models],
     setOllama(url) { s.ollama = url.replace(/\/+$/, ''); },
     setHost(url, pw = s.password) { s.host = url.replace(/\/+$/, ''); s.password = pw; },
     stats: () => ({ done: s.done, failed: s.failed, inflight: [...loops].filter((l) => l.ac).length, recentMs: [...s.recentMs], oomErrors: s.oomErrors }),
