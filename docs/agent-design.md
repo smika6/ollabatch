@@ -116,6 +116,36 @@ Card id = stable string from vendor + PCI bus id (or index where no bus id).
 - Linux: `~/.config/systemd/user/ollabatch-agent.service`, `systemctl --user enable --now`.
 `ollabatch agent` runs it in the foreground (what the launchers call).
 
+### Getting it onto a machine, and the dashboard's Lend button
+
+(Added 2026-11-16 at the owner's request: a joined PC should be one button
+away, and `ollabatch` must be a command on the PATH, not a path to a file.)
+
+- `ollabatch install` also puts `ollabatch` on the PATH, per user, no admin:
+  Windows writes `%LOCALAPPDATA%\ollabatch\bin\ollabatch.cmd` (runs
+  `node <app>\bin\ollabatch.mjs %*`) and adds that folder to the user PATH;
+  macOS/Linux write `~/.local/bin/ollabatch` and add
+  `export PATH="$HOME/.local/bin:$PATH"` to the shell's rc file if that folder
+  isn't on PATH. `uninstall` removes both.
+- The host serves a one-command installer for machines without ollabatch:
+  `GET /install.ps1`, `GET /install.sh`, and `GET /ollabatch.tar` (the host's
+  own copy: `bin/`, `src/`, `examples/`, `package.json`, `README.md`,
+  `LICENSE`, built on the fly). The scripts check for Node >= 20 (and say how to
+  get it: `winget install OpenJS.NodeJS.LTS`, `brew install node`, the
+  distro package), download and unpack the tar into the per-user app folder
+  (`%LOCALAPPDATA%\ollabatch\app`, `~/.ollabatch/app`) with the built-in
+  `tar`, run `ollabatch install --host <host url>`, and open the local page.
+  They carry no password. Plain HTTP on the home network, from the user's own
+  host; the dashboard says so next to the command.
+- Dashboard "Add a machine": a **Lend this PC** button that opens
+  `http://127.0.0.1:11510/#join=<host url>&pw=<password>` on the PC where it's
+  clicked. The fragment never leaves that PC. The local page shows "Lend this
+  PC's GPUs to <host>?" with Lend / Not now, so a link alone can never sign a
+  machine up; the URL must look like `http://<host>:<port>`. If the page
+  doesn't open, ollabatch isn't installed there, and the dashboard shows the
+  one-command installer for Windows / macOS / Linux right below the button,
+  plus the manual `ollabatch join` line for anyone who wants it.
+
 ### Discovery
 
 - The host broadcasts a beacon every 5 s on UDP port 11501:
