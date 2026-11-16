@@ -139,9 +139,9 @@ export class CardServer extends EventEmitter {
 
   #crashed() {
     this.state = 'restarting';
-    this.emit('crash');
     if (Date.now() - (this.startedAt || 0) >= 10 * 60_000) this.backoff = this.baseBackoff;
     const wait = this.backoff;
+    this.emit('crash', { wait });
     this.backoff = Math.min(this.backoff * 2, this.maxBackoff);
     this.log(`card ${this.card.name}: server exited, restarting in ${Math.round(wait / 1000)} s`);
     this.timer = setTimeout(() => { if (!this.stopping) this.start().catch(() => {}); }, wait);

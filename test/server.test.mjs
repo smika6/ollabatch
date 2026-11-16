@@ -64,14 +64,15 @@ test('no matching device → misconfigured', async () => {
 
 test('a crash restarts with growing backoff', async () => {
   const s = server(RTX, { FAKE_GPU: 'NVIDIA GeForce RTX 5080', FAKE_EXIT_AFTER_MS: '400' }, { port: await freePort(), backoffMs: 150 });
-  const starts = [];
-  s.on('ready', () => starts.push(Date.now()));
+  const waits = [];
+  let readies = 0;
+  s.on('crash', ({ wait }) => waits.push(wait));
+  s.on('ready', () => readies++);
   await s.start();
-  const end = Date.now() + 8000;
-  while (starts.length < 3 && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(starts.length >= 3, `restarted ${starts.length - 1} times`);
-  const gap1 = starts[1] - starts[0], gap2 = starts[2] - starts[1];
-  assert.ok(gap2 - gap1 >= 120, `backoff grew (${gap1} → ${gap2} ms)`);
+  const end = Date.now() + 15_000;
+  while (readies < 3 && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(readies >= 3, `came back ${readies - 1} times`);
+  assert.deepEqual(waits.slice(0, 2), [150, 300]);
 });
 
 test('restart(slots) brings the server back with the new parallel count', async () => {

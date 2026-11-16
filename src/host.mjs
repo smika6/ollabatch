@@ -19,6 +19,14 @@ import { startJob } from './runner.mjs';
 import { loadTemplates, instantiate, specProblem } from './templates.mjs';
 import { readJson, writeJsonAtomic, createSaver } from './state.mjs';
 import { workerLoop, makeUnloader, ollamaModels } from './worker.mjs';
+import { startBeacon, BEACON_PORT } from './discovery.mjs';
+
+// An agent on this machine answers on its local page; then it lends the GPUs
+// and the host's own built-in card stays off (two servers on one GPU would
+// fight over its memory, worst on a Mac's shared memory).
+async function probeLocalAgent() {
+  try { return (await fetch('http://127.0.0.1:11510/status', { signal: AbortSignal.timeout(1500) })).ok; } catch { return false; }
+}
 
 const DASHBOARD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dashboard');
 const INFERENCE = /^\/api\/(chat|generate|show|embed|embeddings)$/;
@@ -35,6 +43,8 @@ class HttpError extends Error {
 export async function startHost({
   port = 11500, password, stateDir = '.rigpool', jobsFile = null, maxRunning = 1,
   local = null, bind = '0.0.0.0', now = Date.now, log = () => {},
+  localForced = false, agentProbe = probeLocalAgent,
+  beacon = true, beaconPort = BEACON_PORT, beaconTargets = undefined,
 } = {}) {
   fs.mkdirSync(stateDir, { recursive: true });
   const files = { state: path.join(stateDir, 'state.json'), metrics: path.join(stateDir, 'metrics.json'), token: path.join(stateDir, 'token'), logs: path.join(stateDir, 'logs') };
@@ -178,16 +188,23 @@ export async function startHost({
     const { env, ...rest } = j;   // env can hold secrets; it never leaves the host
     return { ...rest, eta: etaSeconds(j.progress) };
   };
+  // What each machine's agent last said about itself (hardware, owner state, playground).
+  const reports = new Map();   // machine → { ...report, seenAt }
+  const ownerOf = (w) => {
+    const c = reports.get(w.machine)?.cards?.find((x) => x.workerId === w.id);
+    return c ? { state: c.state, reason: c.reason ?? null } : null;
+  };
+  const ownerHolds = (w) => ['paused-by-owner', 'paused-in-use', 'outside-schedule', 'never'].includes(ownerOf(w)?.state);
   function cards() {
     return queue.status().workers.map((w) => {
       const raw = queue.workers.get(w.id);
-      return { ...w, key: cardKey(raw), labels: labelsOf(raw), userLabels: userLabels[cardKey(raw)] || {} };
+      return { ...w, key: cardKey(raw), labels: labelsOf(raw), userLabels: userLabels[cardKey(raw)] || {}, owner: ownerOf(raw) };
     });
   }
   function fullStatus(isLoopback) {
     const s = queue.status();
     const all = cards();
-    const byMachine = new Map();
+    const byMachine = new Map([...reports.keys()].map((m) => [m, []]));
     for (const c of all) {
       if (!byMachine.has(c.machine)) byMachine.set(c.machine, []);
       byMachine.get(c.machine).push(c);
@@ -195,7 +212,7 @@ export async function startHost({
     return {
       jobs: store.list().map(publicJob), queueEta: queueEta(store.list()),
       perSec: s.perSec, queued: s.queued, inflight: s.inflight, done: s.done, models: s.models,
-      workers: all, machines: [...byMachine].map(([machine, list]) => ({ machine, cards: list })),
+      workers: all, machines: [...byMachine].map(([machine, list]) => ({ machine, cards: list, report: reports.get(machine) || null })),
       templates: templates.map((t) => ({ id: t.id, name: t.name, params: t.params, models: t.models || [], selector: t.selector || '' })),
       settings: { maxRunning }, canCreate: isLoopback,
     };
@@ -289,6 +306,25 @@ export async function startHost({
     return publicJob(job);
   }
 
+  // Per card of a machine, the models jobs would use it for: a running job's
+  // actual model (or its whole list when any model will do), a queued job's
+  // first choice. The host matches selectors because dashboard labels live here.
+  function wantsFor(machine) {
+    const out = {};
+    const jobs = store.list().filter((j) => (j.status === 'running' || j.status === 'paused' || j.status === 'queued') && j.models.length);
+    for (const w of queue.workers.values()) {
+      if (w.machine !== machine || w.gone) continue;
+      const models = [];
+      for (const j of jobs) {
+        if (!cardFits(w, j)) continue;
+        const want = j.status === 'queued' ? [j.models[0]] : j.modelPolicy === 'any' ? j.models : [j.model];
+        for (const m of want) if (m && !models.includes(m)) models.push(m);
+      }
+      out[w.id] = models;
+    }
+    return out;
+  }
+
   function logTail(job, lines) {
     try {
       const text = fs.readFileSync(path.join(files.logs, `${job.id}.log`), 'utf8');
@@ -365,8 +401,21 @@ export async function startHost({
       if (!Array.isArray(b.ids)) throw new HttpError(400, 'ids must be a list');
       return send(res, 200, { released: queue.release(String(b.worker), b.ids.map(String)) });
     }
+    if (req.method === 'POST' && p === '/pool/machine') {
+      const b = await readJsonBody(req);
+      if (typeof b.machine !== 'string' || !b.machine) throw new HttpError(400, 'machine is required');
+      if (b.cards != null && !Array.isArray(b.cards)) throw new HttpError(400, 'cards must be a list');
+      reports.set(b.machine, { ...b, seenAt: now() });
+      return send(res, 200, { ok: true });
+    }
+    if (req.method === 'GET' && p === '/pool/wants') {
+      return send(res, 200, { cards: wantsFor(url.searchParams.get('machine') || '') });
+    }
     if (req.method === 'POST' && p === '/pool/pause') {
       const b = await readJsonBody(req);
+      const w = queue.workers.get(b.id);
+      // The machine's owner has the final say: only they can resume what they paused.
+      if (w && !b.paused && ownerHolds(w)) throw new HttpError(409, `paused on its machine: ${ownerOf(w).reason || ownerOf(w).state}`);
       if (!queue.setPaused(b.id, b.paused)) throw new HttpError(404, 'unknown card');
       changed();
       return send(res, 200, { ok: true });
@@ -431,7 +480,15 @@ export async function startHost({
 
   // The host's own GPU joins in-process.
   const localStop = { stopped: false };
-  if (local?.url) {
+  let useLocal = !!local?.url;
+  if (useLocal && !localForced && await agentProbe()) {
+    useLocal = false;
+    log('a rigpool agent runs on this machine: it lends the GPUs, so the built-in local card stays off (--local forces it)');
+  }
+  const beaconer = beacon && lanAddresses().length
+    ? startBeacon({ port: beaconPort, targets: beaconTargets, info: { name: os.hostname(), url: `http://${lanAddresses()[0]}:${listenPort}` } })
+    : null;
+  if (useLocal) {
     const id = `local-${os.hostname()}`;
     const register = (models) => queue.register(id, { label: local.label || `${os.hostname()} (local)`, slots: local.slots || 2, models, host: 'local', machine: os.hostname(), labels: local.labels || {} });
     try {
@@ -457,6 +514,7 @@ export async function startHost({
       if (closing) return;
       closing = true;
       localStop.stopped = true;
+      beaconer?.stop();
       for (const t of timers) clearInterval(t);
       saver.flush();
       try { saveState(); } catch (e) { log(`! couldn't save state: ${e.message}`); }

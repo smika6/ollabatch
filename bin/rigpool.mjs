@@ -6,7 +6,7 @@ import { join } from '../src/join.mjs';
 import { parseLabels } from '../src/labels.mjs';
 
 const HELP = {
-  host: 'rigpool host [--port 11500] [--password pw] [--jobs rigpool.jobs.json] [--max-running 1] [--state .rigpool] [--local http://127.0.0.1:11434] [--local-slots 2] [--no-local]',
+  host: 'rigpool host [--port 11500] [--password pw] [--jobs rigpool.jobs.json] [--max-running 1] [--state .rigpool] [--local http://127.0.0.1:11434] [--local-slots 2] [--no-local] [--no-beacon]',
   join: 'rigpool join <host-url> --password pw [--ollama http://127.0.0.1:11434] [--slots 2] [--label name] [--labels k=v,...]',
   submit: 'rigpool submit [--host url] --name n [--model m]... [--any-model] [--select selector] [--cwd dir] [--shell] -- <command> [args...]',
   ls: 'rigpool ls [--host url]',
@@ -14,7 +14,7 @@ const HELP = {
   pause: 'rigpool pause <job>', resume: 'rigpool resume <job>', cancel: 'rigpool cancel <job>', rerun: 'rigpool rerun <job>',
   log: 'rigpool log <job> [--tail 200] [--host url]',
 };
-const FLAGS = new Set(['--no-local', '--any-model', '--shell', '--help']);
+const FLAGS = new Set(['--no-beacon', '--no-local', '--any-model', '--shell', '--help']);
 
 function parse(argv) {
   const out = { _: [], flags: {}, rest: [] };
@@ -55,6 +55,7 @@ const COMMANDS = {
       port: Number(f.port ?? 11500), password: f.password, stateDir: f.state || '.rigpool', jobsFile,
       maxRunning: Number(f['max-running'] || 1),
       local: f['no-local'] ? null : { url: f.local || 'http://127.0.0.1:11434', slots: Number(f['local-slots'] || 2) },
+      localForced: !!f.local, beacon: !f['no-beacon'],
       log: (s) => console.log(s),
     });
     console.log(`listening on :${h.port}`);
