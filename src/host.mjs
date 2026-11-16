@@ -14,6 +14,7 @@ import { JobStore, JobStateError } from './jobs.mjs';
 import { Metrics } from './metrics.mjs';
 import { Insights } from './insights.mjs';
 import { parseStats } from './infer.mjs';
+import { addRequestToJob, prune, trimLog, filterHistory, toCsv, timelineAdd } from './history.mjs';
 import { parseSelector, matchesSelector } from './labels.mjs';
 import { chooseModel, modelForCard, rewriteModel } from './models.mjs';
 import { advance, etaSeconds, queueEta } from './progress.mjs';
@@ -155,11 +156,12 @@ export async function startHost({
   function start(job) {
     return startJob(job, {
       port: listenPort, logDir: files.logs,
-      onProgress: (p) => { store.setProgress(job.id, advance(job.progress, p, now())); saver.schedule(); },
+      onProgress: (p) => { store.setProgress(job.id, advance(job.progress, p, now())); progressed(job, p.done); saver.schedule(); },
       onExit: (code) => {
         handles.delete(job.id);
         if (closing) return;   // the next host start records it as "host restarted"
         store.markFinished(job.id, code);
+        finished(job);
         queue.dropJob(job.id, 'job exited');
         log(`job ${job.id} ${job.name} exited ${code}`);
         changed();
@@ -217,6 +219,11 @@ export async function startHost({
       return { ...w, key: cardKey(raw), labels: labelsOf(raw), userLabels: userLabels[cardKey(raw)] || {}, owner: ownerOf(raw) };
     });
   }
+  function recentJobs() {
+    const all = store.list();
+    const done = new Set(all.filter((j) => ['done', 'failed', 'cancelled'].includes(j.status)).sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0)).slice(0, 20));
+    return all.filter((j) => !['done', 'failed', 'cancelled'].includes(j.status) || done.has(j));
+  }
   function fullStatus(isLoopback) {
     const s = queue.status();
     const all = cards();
@@ -226,7 +233,8 @@ export async function startHost({
       byMachine.get(c.machine).push(c);
     }
     return {
-      jobs: store.list().map(publicJob), queueEta: queueEta(store.list()),
+      // Active jobs plus the 20 most recent finished ones; the rest is in /ob/history.
+      jobs: recentJobs().map(publicJob), queueEta: queueEta(store.list()),
       perSec: s.perSec, queued: s.queued, inflight: s.inflight, done: s.done, models: s.models,
       workers: all, machines: [...byMachine].map(([machine, list]) => ({ machine, cards: list, report: reports.get(machine) || null })),
       templates: templates.map((t) => ({ id: t.id, name: t.name, params: t.params, models: t.models || [], selector: t.selector || '' })),
@@ -341,11 +349,48 @@ export async function startHost({
     return out;
   }
 
-  function logTail(job, lines) {
+  function logTail(job, lines, q = null) {
     try {
       const text = fs.readFileSync(path.join(files.logs, `${job.id}.log`), 'utf8');
-      return text.split(/\r?\n|\r/).slice(-lines).join('\n');
+      let all = text.split(/\r?\n|\r/);
+      if (q) { const needle = q.toLowerCase(); all = all.filter((l) => l.toLowerCase().includes(needle)); }
+      return all.slice(-lines).join('\n');
     } catch { return ''; }
+  }
+
+  // ── history ──────────────────────────────────────────────────────────────
+  const historyDir = path.join(stateDir, 'history');
+  const timelines = new Map();   // running jobs' per-minute done counts
+  const timelineFile = (id) => path.join(historyDir, `${id}.json`);
+  function progressed(job, done) {
+    if (!timelines.has(job.id)) timelines.set(job.id, {});
+    timelineAdd(timelines.get(job.id), done, now());
+  }
+  function finished(job) {
+    const tl = timelines.get(job.id);
+    if (tl) {
+      try { writeJsonAtomic(timelineFile(job.id), tl); } catch { /* the graph is optional */ }
+      timelines.delete(job.id);
+    }
+    try { trimLog(path.join(files.logs, `${job.id}.log`)); } catch { /* best effort */ }
+    onJobFinished?.(job);
+  }
+  let onJobFinished = null;   // set by summaries
+  onRequestDone = (lease, workerId, ok, stats, result) => {
+    const job = lease.jobId !== '_' && store.get(lease.jobId);
+    if (!job) return;
+    addRequestToJob(job, { card: workerId, cardLabel: queue.workers.get(workerId)?.label, ok, retried: lease.attempts > 1, stats,
+      error: ok ? null : result.error || `HTTP ${result.status}` });
+    saver.schedule();
+  };
+  function forget(id) {
+    store.remove(id);
+    fs.rmSync(path.join(files.logs, `${id}.log`), { force: true });
+    fs.rmSync(timelineFile(id), { force: true });
+  }
+  function pruneHistory() {
+    for (const id of prune({ jobs: store.list(), now: now() })) forget(id);
+    saver.schedule();
   }
 
   function dashboard(res, isLocal) {
@@ -476,16 +521,57 @@ export async function startHost({
       return send(res, 200, metrics.series({ by, minutes }));
     }
     if (req.method === 'POST' && p === '/ob/jobs') return send(res, 200, publicJob(newJob(await readJsonBody(req), loopback)));
+    if (req.method === 'GET' && p === '/ob/history') {
+      const sp = url.searchParams;
+      const r = filterHistory(store.list(), { q: sp.get('q'), status: sp.get('status'), template: sp.get('template'),
+        from: sp.get('from') ?? undefined, to: sp.get('to') ?? undefined, limit: sp.get('limit'), before: sp.get('before') });
+      return send(res, 200, { jobs: r.jobs.map(publicJob), next: r.next });
+    }
+    if (req.method === 'GET' && p === '/ob/history/export') {
+      const all = filterHistory(store.list(), { limit: 100_000 }).jobs.map(publicJob);
+      if (url.searchParams.get('format') === 'csv') {
+        res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="ollabatch-history.csv"' });
+        return res.end(toCsv(all));
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': 'attachment; filename="ollabatch-history.json"' });
+      return res.end(JSON.stringify(all));
+    }
+    if ((m = p.match(/^\/ob\/jobs\/([\w-]+)$/))) {
+      const job = jobOr404(m[1]);
+      if (req.method === 'GET') return send(res, 200, { ...publicJob(job), timeline: timelines.get(job.id) || readJson(timelineFile(job.id)) || null });
+      if (req.method === 'PATCH') {
+        const b = await readJsonBody(req);
+        if (b.notes != null) job.notes = String(b.notes).slice(0, 10_000);
+        saver.schedule();
+        return send(res, 200, publicJob(job));
+      }
+      if (req.method === 'DELETE') {
+        if (!['done', 'failed', 'cancelled'].includes(job.status)) throw new HttpError(409, `job ${job.id} is ${job.status}; cancel it first`);
+        forget(job.id);
+        return send(res, 200, { ok: true });
+      }
+    }
     if ((m = p.match(/^\/ob\/jobs\/([\w-]+)\/(\w+)$/))) {
       const job = jobOr404(m[1]);
       if (req.method === 'GET' && m[2] === 'log') {
-        return send(res, 200, logTail(job, Math.min(5000, Number(url.searchParams.get('tail')) || 200)), 'text/plain; charset=utf-8');
+        if (url.searchParams.get('download')) {
+          const file = path.join(files.logs, `${job.id}.log`);
+          res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': `attachment; filename="${job.id}.log"` });
+          return fs.existsSync(file) ? fs.createReadStream(file).pipe(res) : res.end('');
+        }
+        return send(res, 200, logTail(job, Math.min(5000, Number(url.searchParams.get('tail')) || 200), url.searchParams.get('q')), 'text/plain; charset=utf-8');
       }
       if (req.method === 'POST' && m[2] === 'progress') {
         if (!loopback) throw new HttpError(403, 'progress comes from the job itself');
         const b = await readJsonBody(req);
-        if (!Number.isFinite(Number(b.done))) throw new HttpError(400, 'done must be a number');
-        store.setProgress(job.id, advance(job.progress, { done: Number(b.done), total: b.total == null ? undefined : Number(b.total) }, now()));
+        if (typeof b.summary === 'string' && b.summary.trim()) {
+          job.summary = { text: b.summary.trim().slice(0, 4000), model: null, at: now(), source: 'job' };
+        }
+        if (b.done != null) {
+          if (!Number.isFinite(Number(b.done))) throw new HttpError(400, 'done must be a number');
+          store.setProgress(job.id, advance(job.progress, { done: Number(b.done), total: b.total == null ? undefined : Number(b.total) }, now()));
+          progressed(job, Number(b.done));
+        }
         saver.schedule();
         return send(res, 200, { ok: true });
       }
@@ -515,7 +601,9 @@ export async function startHost({
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, bind, resolve); });
   listenPort = server.address().port;
 
+  pruneHistory();
   const timers = [
+    setInterval(pruneHistory, 24 * 60 * 60_000),
     setInterval(() => queue.expireLeases(), 30_000),
     setInterval(tick, 1_000),
     setInterval(saveMetrics, 60_000),

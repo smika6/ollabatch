@@ -33,6 +33,7 @@ export class JobStore {
   }
 
   get(id) { return this.jobs.find((j) => j.id === id); }
+  remove(id) { this.jobs = this.jobs.filter((j) => j.id !== id); }
   list() { return this.jobs; }
 
   rankOf(id) {
