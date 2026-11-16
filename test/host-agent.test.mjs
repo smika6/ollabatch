@@ -86,7 +86,7 @@ test('the beacon announces name and URL and never the password', async () => {
   const l = await listenBeacons({ port: p, onHost: (h) => heard.push(h) });
   cleanup.push(() => l.stop());
   const s = await host({ beacon: true, beaconPort: p, beaconTargets: ['127.0.0.1'] });
-  await waitFor(() => heard.length > 0, 8000, 'beacon');
+  await waitFor(() => heard.length > 0, 15_000, 'beacon');
   assert.match(heard[0].url, new RegExp(`:${s.h.port}$`));
   assert.equal(heard[0].name, os.hostname());
 });

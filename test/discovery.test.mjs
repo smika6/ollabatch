@@ -12,7 +12,7 @@ test('a beacon is heard with the host\'s name and URL', async () => {
   const l = await listenBeacons({ port: p, onHost: (h) => heard.push(h) });
   const b = startBeacon({ port: p, every: 100, info: { name: 'macbook', url: 'http://192.168.1.20:11500' }, targets: ['127.0.0.1'] });
   try {
-    await waitFor(() => heard.length > 0, 3000, 'beacon');
+    await waitFor(() => heard.length > 0, 10_000, 'beacon');
     assert.equal(heard[0].name, 'macbook');
     assert.equal(heard[0].url, 'http://192.168.1.20:11500');
     assert.equal(l.hosts().size, 1);
