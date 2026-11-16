@@ -1,0 +1,10 @@
+{
+  "name": "rigpool",
+  "version": "0.1.0",
+  "description": "Batch AI jobs across every GPU on your LAN",
+  "type": "module",
+  "bin": { "rigpool": "bin/rigpool.mjs" },
+  "scripts": { "test": "node --test" },
+  "engines": { "node": ">=20" },
+  "license": "MIT"
+}
