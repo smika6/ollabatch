@@ -1,0 +1,16 @@
+{
+  "templates": [
+    {
+      "id": "prompts",
+      "name": "Answer prompts in ${file}.jsonl",
+      "command": "node",
+      "args": ["batch-prompts.mjs", "${file}.jsonl", "${file}.answers.jsonl"],
+      "cwd": ".",
+      "models": ["gemma4:26b", "gemma4:12b"],
+      "minCards": 2,
+      "params": [{ "name": "file", "values": ["example"], "default": "example" }],
+      "estimate": 20,
+      "restartable": true
+    }
+  ]
+}
