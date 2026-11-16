@@ -90,15 +90,18 @@ export class JobStore {
   toJSON() { return { nextId: this.nextId, jobs: this.jobs }; }
 
   // A job that was running when the host went down is failed; a restartable
-  // one is also re-queued where it stood (resume-by-default jobs pick up the rest).
-  static fromJSON(obj, { now } = {}) {
+  // one is also re-queued where it stood (resume-by-default jobs pick up the
+  // rest) — unless its process outlived the host, which would run it twice.
+  static fromJSON(obj, { now, isAlive = () => false } = {}) {
     const s = new JobStore({ now });
     s.nextId = obj?.nextId || 1;
     s.jobs = obj?.jobs || [];
     for (const job of [...s.jobs]) {
       if (job.status !== 'running' && job.status !== 'paused') continue;
-      Object.assign(job, { status: 'failed', reason: 'host restarted', finishedAt: s.now() });
-      if (job.restartable) s.add(Object.fromEntries(SPEC_KEYS.map((k) => [k, job[k]])), s.jobs.indexOf(job));
+      const orphan = job.pid && isAlive(job.pid);
+      Object.assign(job, { status: 'failed', finishedAt: s.now(),
+        reason: orphan ? `host restarted; its process (pid ${job.pid}) may still be running` : 'host restarted' });
+      if (job.restartable && !orphan) s.add(Object.fromEntries(SPEC_KEYS.map((k) => [k, job[k]])), s.jobs.indexOf(job));
     }
     return s;
   }

@@ -31,9 +31,14 @@ export function writeJsonAtomic(file, value) {
   fs.renameSync(tmp, file);
 }
 
-export function createSaver(write, ms = 500) {
+// Saves run from timers, so a failure (a locked file on Windows, a full disk)
+// is reported, never thrown; the next schedule() tries again.
+export function createSaver(write, ms = 500, onError = () => {}) {
   let timer = null;
-  const run = () => { timer = null; write(); };
+  const run = () => {
+    timer = null;
+    try { write(); } catch (e) { onError(e); }
+  };
   return {
     schedule() { if (!timer) timer = setTimeout(run, ms); },
     flush() { if (timer) { clearTimeout(timer); run(); } },

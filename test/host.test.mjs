@@ -1,6 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -130,6 +131,55 @@ test('restart: a running job comes back failed with reason "host restarted"', as
   const job = await jobById(api(`http://127.0.0.1:${h2.port}`, 'secret-pw'), r.json.id);
   assert.equal(job.status, 'failed');
   assert.equal(job.reason, 'host restarted');
+});
+
+// A raw request so Host and Origin can be set the way a browser would.
+function raw(port, { method = 'GET', path: p = '/', headers = {}, body } = {}) {
+  return new Promise((resolve, reject) => {
+    const r = http.request({ host: '127.0.0.1', port, method, path: p, headers }, (res) => {
+      let text = '';
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => resolve({ status: res.statusCode, text }));
+    });
+    r.on('error', reject);
+    r.end(body);
+  });
+}
+
+test('a web page in a browser on the host cannot use loopback trust', async () => {
+  const s = await setup({ cards: [{ id: 'w' }] });
+  const port = s.host.port;
+  const evil = { Origin: 'http://evil.example', 'Content-Type': 'text/plain' };
+  const cmd = JSON.stringify(loopbackJob({ args: [CALL, '1'] }));
+  assert.equal((await raw(port, { method: 'POST', path: '/rp/jobs', headers: evil, body: cmd })).status, 403);
+  assert.equal((await raw(port, { method: 'POST', path: '/api/chat', headers: evil, body: '{"model":"fake","stream":false}' })).status, 403);
+  // DNS rebinding: a foreign Host on a loopback socket gets no trust and no password.
+  const rebound = await raw(port, { path: '/', headers: { Host: `evil.example:${port}` } });
+  assert.doesNotMatch(rebound.text, /secret-pw/);
+  assert.equal((await raw(port, { path: '/rp/status', headers: { Host: `evil.example:${port}` } })).status, 401);
+  // The real dashboard (same origin) and plain tools (no Origin) still work.
+  const own = await raw(port, { method: 'POST', path: '/rp/jobs', headers: { Origin: `http://127.0.0.1:${port}`, 'Content-Type': 'application/json' }, body: cmd });
+  assert.equal(own.status, 200, own.text);
+  assert.equal((await raw(port, { path: '/rp/status', headers: { Host: `localhost:${port}` } })).status, 200);
+});
+
+test('an invalid job spec is refused and the host keeps running', async () => {
+  const s = await setup();
+  for (const bad of [{ progressPattern: '(' }, { cwd: 5 }, { args: [1, 2] }, { env: { A: 1 } }]) {
+    const r = await s.call('POST', '/rp/jobs', loopbackJob(bad));
+    assert.equal(r.status, 400, JSON.stringify(bad));
+  }
+  await new Promise((r) => setTimeout(r, 1200)); // a scheduler tick
+  assert.equal((await s.call('GET', '/rp/status')).status, 200);
+});
+
+test('a request that arrives after its job was cancelled is refused', async () => {
+  const s = await setup();
+  const j = (await s.call('POST', '/rp/jobs', loopbackJob({ args: [CALL, '1'], models: [] }))).json;
+  // No cards: the job waits queued; force it to look cancelled, then call its route.
+  await s.call('POST', `/rp/jobs/${j.id}/cancel`);
+  assert.equal((await s.call('POST', `/j/${j.id}/api/chat`, { model: 'fake' })).status, 409);
+  assert.equal(s.host.queue.status().queued, 0);
 });
 
 test('reorder, pause/resume and rerun through the control API', async () => {

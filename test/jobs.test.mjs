@@ -110,6 +110,16 @@ test('waiting is a reason, not a status', () => {
   assert.equal(s.get(a.id).reason, null);
 });
 
+test('restart: a restartable job whose process survived is not started twice', () => {
+  const s = new JobStore();
+  const keep = s.add(spec('keep', { restartable: true }));
+  s.markStarted(keep.id, { model: 'm' });
+  s.get(keep.id).pid = 4242;
+  const r = JobStore.fromJSON(JSON.parse(JSON.stringify(s.toJSON())), { isAlive: (pid) => pid === 4242 });
+  assert.deepEqual(r.list().map((j) => j.status), ['failed']);
+  assert.match(r.get(keep.id).reason, /4242/);
+});
+
 test('restart: running jobs fail; restartable ones are re-queued at their old index', () => {
   const s = new JobStore();
   s.add(spec('first'));

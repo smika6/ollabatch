@@ -10,7 +10,7 @@ export async function join({ hostUrl, password = '', ollama = 'http://127.0.0.1:
   ollama = ollama.replace(/\/+$/, '');
   const id = `${os.hostname()}-${ollama.replace(/\W+/g, '-')}-${crypto.randomBytes(3).toString('hex')}`;
   const headers = { 'Content-Type': 'application/json', 'x-pool-token': password };
-  const models = await ollamaModels(ollama);
+  let models = await ollamaModels(ollama);
   label ||= `${os.hostname()} ${ollama.replace(/^https?:\/\//, '')}`;
   const register = async () => {
     const r = await fetch(`${hostUrl}/pool/register`, { method: 'POST', headers,
@@ -41,10 +41,16 @@ export async function join({ hostUrl, password = '', ollama = 'http://127.0.0.1:
   const finish = (req, result) => fetch(`${hostUrl}/pool/result?worker=${encodeURIComponent(id)}&job=${encodeURIComponent(req.id)}`,
     { method: 'POST', headers, body: JSON.stringify(result) });
   for (let i = 0; i < slots; i++) workerLoop({ take, finish, ollama, stop, isPaused: () => paused, unload: unloader.unload });
+  // Heartbeat: keeps the card listed while every slot is on a long request,
+  // and picks up models pulled since joining.
+  const beat = setInterval(async () => {
+    try { models = await ollamaModels(ollama); await register(); } catch { /* next beat */ }
+  }, 30_000);
 
   return {
     id,
     async leave() {
+      clearInterval(beat);
       stop.stopped = true;
       try { await fetch(`${hostUrl}/pool/leave`, { method: 'POST', headers, body: JSON.stringify({ id }) }); } catch { /* host gone */ }
     },

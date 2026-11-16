@@ -1,6 +1,8 @@
 // The loop every card runs, in-process on the host or remote via `rigpool join`:
 // take a request, run it on this card's Ollama, hand back the result.
 
+export const REQUEST_TIMEOUT_MS = 9 * 60_000;
+
 export async function workerLoop({ take, finish, ollama, stop, isPaused = () => false, unload }) {
   while (!stop.stopped) {
     let req;
@@ -11,7 +13,10 @@ export async function workerLoop({ take, finish, ollama, stop, isPaused = () => 
     }
     let result;
     try {
-      const r = await fetch(`${ollama}${req.path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: req.body });
+      // Under the host's 10-minute lease, so a hung Ollama frees the slot
+      // instead of pinning it on every re-lease.
+      const r = await fetch(`${ollama}${req.path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: req.body,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       result = { status: r.status, body: await r.text(), contentType: r.headers.get('content-type') || undefined };
     } catch (e) {
       result = { status: 0, error: e.cause?.code || e.message };

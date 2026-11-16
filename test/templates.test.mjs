@@ -57,6 +57,11 @@ test('a missing param uses its default, else throws', () => {
   assert.throws(() => instantiate(t, {}), /mode/);
 });
 
+test('a bad progressPattern or a non-string arg is rejected at load', () => {
+  assert.throws(() => loadTemplates(fixture({ templates: [{ ...TAG, progressPattern: '(' }] }).file), /progressPattern/);
+  assert.throws(() => loadTemplates(fixture({ templates: [{ ...TAG, args: [1] }] }).file), /args/);
+});
+
 test('command never comes from params', () => {
   const [t] = loadTemplates(fixture({ templates: [{ ...TAG, command: '${catalog}' }] }).file);
   assert.equal(instantiate(t, { catalog: 'global', mode: 'fast' }).command, '${catalog}');

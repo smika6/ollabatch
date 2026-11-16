@@ -200,6 +200,47 @@ test('reoffer hands a newly eligible request to an idle waiter', async () => {
   assert.equal((await waiting).body, 'x');
 });
 
+test('a card busy on long requests stays active', async () => {
+  let now = 0;
+  const q = new RequestQueue({ now: () => now });
+  q.register('w');
+  q.enqueue(req('long'));
+  await q.take('w');
+  now = 200_000;
+  assert.deepEqual(q.activeWorkers().map((w) => w.id), ['w']);
+});
+
+test('lease expiries count toward maxAttempts', async () => {
+  let now = 0;
+  const q = new RequestQueue({ leaseMs: 100, maxAttempts: 2, now: () => now });
+  q.register('w');
+  const result = q.enqueue(req('slow'));
+  await q.take('w');
+  now = 500; q.expireLeases();
+  await q.take('w');
+  now = 1000; q.expireLeases();
+  const r = await result;
+  assert.equal(r.status, 502);
+  assert.match(r.body, /lease expired/);
+  assert.equal(q.status().queued, 0);
+});
+
+test('an aborted request leaves the queue and its late result is refused', async () => {
+  const q = new RequestQueue();
+  q.register('w');
+  const ac1 = new AbortController();
+  const pending = q.enqueue({ ...req('gone'), signal: ac1.signal });
+  ac1.abort();
+  assert.equal((await pending).status, 499);
+  assert.equal(q.status().queued, 0);
+  const ac2 = new AbortController();
+  const leased = q.enqueue({ ...req('gone too'), signal: ac2.signal });
+  const r = await q.take('w');
+  ac2.abort();
+  assert.equal((await leased).status, 499);
+  assert.equal(q.complete(r.id, 'w', ok()), false);
+});
+
 test('status carries machine, labels and the latest job', async () => {
   const q = new RequestQueue();
   q.register('w', { machine: 'desk', labels: { gpu: 'nvidia' } });

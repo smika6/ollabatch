@@ -16,13 +16,15 @@ import { parseSelector, matchesSelector } from './labels.mjs';
 import { chooseModel, modelForCard, rewriteModel } from './models.mjs';
 import { advance, etaSeconds, queueEta } from './progress.mjs';
 import { startJob } from './runner.mjs';
-import { loadTemplates, instantiate } from './templates.mjs';
+import { loadTemplates, instantiate, specProblem } from './templates.mjs';
 import { readJson, writeJsonAtomic, createSaver } from './state.mjs';
 import { workerLoop, makeUnloader, ollamaModels } from './worker.mjs';
 
 const DASHBOARD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dashboard');
 const INFERENCE = /^\/api\/(chat|generate|show|embed|embeddings)$/;
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+const LOCAL_NAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const STATIC = { '/app.js': 'text/javascript', '/style.css': 'text/css' };
 const JOB_ACTIONS = new Set(['move', 'pause', 'resume', 'cancel', 'rerun']);
 
@@ -45,7 +47,7 @@ export async function startHost({
   fs.writeFileSync(files.token, token);
 
   const state = readJson(files.state) || {};
-  const store = JobStore.fromJSON(state.jobs, { now });
+  const store = JobStore.fromJSON(state.jobs, { now, isAlive: pidAlive });
   const userLabels = state.cardLabels || {};   // cardKey → { k: v }, set from the dashboard/CLI
   const metrics = Metrics.fromJSON(readJson(files.metrics), { now });
   const templates = loadTemplates(jobsFile);
@@ -77,7 +79,9 @@ export async function startHost({
   const queue = new RequestQueue({ now, canServe, rankOf: (id) => (id === '_' ? Infinity : store.rankOf(id)) });
   const liveCards = () => queue.activeWorkers().filter((w) => !w.paused);
 
-  const saver = createSaver(() => writeJsonAtomic(files.state, { jobs: store.toJSON(), cardLabels: userLabels }));
+  const saveState = () => writeJsonAtomic(files.state, { jobs: store.toJSON(), cardLabels: userLabels });
+  const saveMetrics = () => { try { writeJsonAtomic(files.metrics, metrics.toJSON()); } catch (e) { log(`! couldn't save metrics: ${e.message}`); } };
+  const saver = createSaver(saveState, 500, (e) => log(`! couldn't save state: ${e.message}`));
   const changed = () => { saver.schedule(); setImmediate(tick); };
 
   // ── scheduler ────────────────────────────────────────────────────────────
@@ -111,7 +115,24 @@ export async function startHost({
 
   function launch(job, model) {
     store.markStarted(job.id, { model });
-    const handle = startJob(job, {
+    let handle;
+    try {
+      handle = start(job);
+    } catch (e) {
+      store.markFinished(job.id, 127);
+      job.reason = `couldn't start: ${e.message}`;
+      log(`job ${job.id} ${job.name} couldn't start: ${e.message}`);
+      return;
+    }
+    handles.set(job.id, handle);
+    // Saved right away: after a hard crash the next start must know this pid.
+    job.pid = handle.pid;
+    saver.schedule(); saver.flush();
+    log(`job ${job.id} ${job.name} started${model ? ` on ${model}` : ''}`);
+  }
+
+  function start(job) {
+    return startJob(job, {
       port: listenPort, logDir: files.logs,
       onProgress: (p) => { store.setProgress(job.id, advance(job.progress, p, now())); saver.schedule(); },
       onExit: (code) => {
@@ -123,8 +144,6 @@ export async function startHost({
         changed();
       },
     });
-    handles.set(job.id, handle);
-    log(`job ${job.id} ${job.name} started${model ? ` on ${model}` : ''}`);
   }
 
   async function cancel(job) {
@@ -197,7 +216,12 @@ export async function startHost({
     res.writeHead(status, { 'Content-Type': type });
     res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
   };
-  const isLoopback = (req) => LOOPBACK.has(req.socket.remoteAddress);
+  // A loopback socket alone isn't trust: any web page in a browser on this
+  // machine connects from 127.0.0.1 too. Also require a local Host header
+  // (defeats DNS rebinding) and no foreign Origin (defeats cross-site posts).
+  const hostName = (req) => (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+  const foreignOrigin = (req) => req.headers.origin != null && req.headers.origin !== `http://${req.headers.host}`;
+  const isLoopback = (req) => LOOPBACK.has(req.socket.remoteAddress) && LOCAL_NAMES.has(hostName(req)) && !foreignOrigin(req);
   const authed = (req, url) => isLoopback(req) || req.headers['x-pool-token'] === token || url.searchParams.get('token') === token;
   const jobOr404 = (id) => {
     const job = store.get(id);
@@ -207,13 +231,19 @@ export async function startHost({
 
   async function inference(req, res, jobId, apiPath) {
     if (!isLoopback(req)) return send(res, 403, { error: 'rigpool: the model API is only for jobs on this host' });
-    if (jobId !== '_') {
+    const live = () => {
       const job = jobOr404(jobId);
       if (job.status !== 'running' && job.status !== 'paused') throw new HttpError(409, `job ${jobId} is ${job.status}`);
-    } else if (!queue.activeWorkers().length) {
-      return send(res, 503, { error: 'rigpool: no cards have joined yet' });
-    }
-    const r = await queue.enqueue({ jobId, path: apiPath, body: await readBody(req) });
+    };
+    if (jobId !== '_') live();
+    else if (!queue.activeWorkers().length) return send(res, 503, { error: 'rigpool: no cards have joined yet' });
+    const body = await readBody(req);
+    if (jobId !== '_') live();   // it may have been cancelled while the body arrived
+    // A client that gives up (timeout, retry, exit) takes its request with it.
+    const gone = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) gone.abort(); });
+    const r = await queue.enqueue({ jobId, path: apiPath, body, signal: gone.signal });
+    if (gone.signal.aborted) return;
     return send(res, r.status, r.body, r.contentType || 'application/json');
   }
 
@@ -234,12 +264,10 @@ export async function startHost({
     } else {
       // A free-form command runs on this machine: only from the host itself.
       if (!loopback) throw new HttpError(403, 'rigpool: only templates can be added from another machine');
-      if (typeof body.command !== 'string' || !body.command) throw new HttpError(400, 'command is required');
-      if (body.args != null && !Array.isArray(body.args)) throw new HttpError(400, 'args must be a list');
       spec = { ...body };
     }
-    if (spec.models != null && (!Array.isArray(spec.models) || spec.models.some((m) => typeof m !== 'string'))) throw new HttpError(400, 'models must be a list of names');
-    if (spec.modelPolicy != null && !['one', 'any'].includes(spec.modelPolicy)) throw new HttpError(400, 'modelPolicy is "one" or "any"');
+    const problem = specProblem(spec);
+    if (problem) throw new HttpError(400, problem);
     try { parseSelector(spec.selector); } catch (e) { throw new HttpError(400, e.message); }
     const job = store.add(spec);
     changed();
@@ -279,6 +307,7 @@ export async function startHost({
   async function route(req, res) {
     const url = new URL(req.url, 'http://rigpool');
     const p = url.pathname;
+    if (foreignOrigin(req)) return send(res, 403, { error: 'rigpool: cross-site request refused' });
     const loopback = isLoopback(req);
 
     // Model API for jobs (loopback only).
@@ -391,7 +420,7 @@ export async function startHost({
   const timers = [
     setInterval(() => queue.expireLeases(), 30_000),
     setInterval(tick, 1_000),
-    setInterval(() => writeJsonAtomic(files.metrics, metrics.toJSON()), 60_000),
+    setInterval(saveMetrics, 60_000),
   ];
   for (const t of timers) t.unref();
 
@@ -425,8 +454,8 @@ export async function startHost({
       localStop.stopped = true;
       for (const t of timers) clearInterval(t);
       saver.flush();
-      writeJsonAtomic(files.state, { jobs: store.toJSON(), cardLabels: userLabels });
-      writeJsonAtomic(files.metrics, metrics.toJSON());
+      try { saveState(); } catch (e) { log(`! couldn't save state: ${e.message}`); }
+      saveMetrics();
       await Promise.all([...handles.values()].map((h) => h.kill()));
       server.closeAllConnections();
       await new Promise((r) => server.close(r));

@@ -38,6 +38,18 @@ test('replaces an existing file', () => {
   assert.equal(fs.existsSync(`${f}.tmp`), false);
 });
 
+test('a failing save is reported, not thrown, and retried on the next schedule', async () => {
+  let calls = 0;
+  const errors = [];
+  const saver = createSaver(() => { calls++; if (calls === 1) throw new Error('EPERM'); }, 10, (e) => errors.push(e.message));
+  saver.schedule();
+  await new Promise((r) => setTimeout(r, 40));
+  assert.deepEqual(errors, ['EPERM']);
+  saver.schedule();
+  saver.flush();
+  assert.equal(calls, 2);
+});
+
 test('saver debounces and flush writes only when scheduled', async () => {
   let writes = 0;
   const saver = createSaver(() => { writes++; }, 50);

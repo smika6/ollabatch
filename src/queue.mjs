@@ -28,9 +28,15 @@ export class RequestQueue {
   }
 
   // ── client side ──────────────────────────────────────────────────────────
-  enqueue({ jobId = '_', path, body }) {
+  // `signal`: the client went away (timed out, retried, exited) — drop the
+  // request instead of running it on a GPU for nobody.
+  enqueue({ jobId = '_', path, body, signal }) {
     return new Promise((resolve) => {
       const r = { id: String(this.nextId++), jobId, path, body, attempts: 0, triedBy: new Set(), resolve, enqueuedAt: this.now() };
+      if (signal) {
+        if (signal.aborted) return resolve({ status: 499, body: JSON.stringify({ error: 'client gone' }) });
+        signal.addEventListener('abort', () => this.#abort(r), { once: true });
+      }
       this.#offer(r);
     });
   }
@@ -122,10 +128,19 @@ export class RequestQueue {
     return true;
   }
 
-  // Call periodically: re-queue requests whose worker went quiet.
+  // Call periodically: re-queue requests whose worker went quiet. Expiries
+  // count as attempts, so a request no card can finish isn't re-run forever.
   expireLeases() {
     const cutoff = this.now() - this.leaseMs;
-    for (const r of [...this.leased.values()]) if (r.leasedAt < cutoff) this.#requeue(r, 'lease expired');
+    for (const r of [...this.leased.values()]) {
+      if (r.leasedAt >= cutoff) continue;
+      if (r.attempts >= this.maxAttempts) {
+        this.leased.delete(r.id);
+        r.resolve({ status: 502, body: JSON.stringify({ error: `rigpool: gave up after ${r.attempts} attempts — last: lease expired` }) });
+      } else {
+        this.#requeue(r, 'lease expired');
+      }
+    }
   }
 
   // Re-match pending requests to idle waiters — after a job resumes, a label
@@ -140,9 +155,12 @@ export class RequestQueue {
     }
   }
 
+  // A card is active if it polled recently or is holding a request: one busy
+  // on long generations doesn't poll, but it isn't gone.
   activeWorkers(windowMs = 90_000) {
     const since = this.now() - windowMs;
-    return [...this.workers.values()].filter((w) => !w.gone && w.lastSeen >= since);
+    const busy = new Set([...this.leased.values()].map((r) => r.workerId));
+    return [...this.workers.values()].filter((w) => !w.gone && (w.lastSeen >= since || busy.has(w.id)));
   }
 
   // Models every active worker has (what an unrestricted request can use).
@@ -213,6 +231,14 @@ export class RequestQueue {
     this.leased.delete(r.id);
     r.lastWhy = why;
     this.#offer(r);
+  }
+
+  #abort(r) {
+    const i = this.pending.indexOf(r);
+    if (i >= 0) this.pending.splice(i, 1);
+    else if (this.leased.get(r.id) === r) this.leased.delete(r.id);
+    else return;
+    r.resolve({ status: 499, body: JSON.stringify({ error: 'client gone' }) });
   }
 
   #releaseWaiters(id) {

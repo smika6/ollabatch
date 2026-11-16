@@ -120,8 +120,11 @@ while it runs. On Windows, set `"shell": true` for `npm`/`npx` commands.
 rigpool is for your home network. The pool password (`--password`, or a
 random one saved in `.rigpool/token`) is required to join a card or use the
 dashboard from another device. The model API is only reachable from the host
-itself, and jobs' environment variables never leave the host. Don't expose
-the port to the internet.
+itself (and only to programs, not to web pages open in a browser there), and
+jobs' environment variables never leave the host. One read-only endpoint,
+`/pool/status`, stays open for older join clients: it shows card names, their
+IPs, models and job names to anyone on your network. Don't expose the port to
+the internet.
 
 ## CLI
 
