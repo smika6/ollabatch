@@ -32,7 +32,18 @@ async function userPath() {
   return (await realIo.exec('powershell', ['-NoProfile', '-NonInteractive', '-Command', "[Environment]::GetEnvironmentVariable('Path', 'User')"]) || '').trim();
 }
 
+// Reinstalling or uninstalling: stop the running agent first, so it takes its
+// GPU servers down with it instead of leaving them beside a new agent's.
+async function stopRunningAgent() {
+  try { await fetch('http://127.0.0.1:11510/quit', { method: 'POST', signal: AbortSignal.timeout(2000) }); } catch { return; }
+  for (let i = 0; i < 40; i++) {
+    try { await fetch('http://127.0.0.1:11510/status', { signal: AbortSignal.timeout(500) }); } catch { return; }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
 async function install(f) {
+  await stopRunningAgent();
   const r = await installAgent({ ...defaults(), ...realIo, binPath: BIN, trusted: !!f.trusted, userPath: await userPath() });
   if (f.host) {
     const dir = path.join(os.homedir(), '.ollabatch', 'agent');
@@ -107,15 +118,23 @@ const COMMANDS = {
       for (const c of s.cards) console.log(`  ${c.name}\t${c.state}${c.reason ? ` (${c.reason})` : ''}${c.slots ? `\t${c.slots} slot(s)` : ''}`);
       return;
     }
-    const agent = await startAgent({ dir: f.dir, host: f.host, password: f.password, trusted: !!f.trusted, log: (s) => console.log(s) });
-    const page = await startPage({ agent });
+    // The page first: if another agent already runs here, stop before starting any GPU servers.
+    let agent = null;
+    const stop = async () => { await page?.close(); await agent?.close(); process.exit(0); };
+    let page;
+    try { page = await startPage({ onQuit: stop }); } catch (e) {
+      if (e.code === 'EADDRINUSE') throw new Error('an agent is already running on this machine (http://127.0.0.1:11510/)');
+      throw e;
+    }
+    agent = await startAgent({ dir: f.dir, host: f.host, password: f.password, trusted: !!f.trusted, log: (s) => console.log(s) });
+    page.setAgent(agent);
     console.log(`agent running - its page: http://127.0.0.1:${page.port}/`);
-    const stop = async () => { await page.close(); await agent.close(); process.exit(0); };
     process.on('SIGINT', stop);
     process.on('SIGTERM', stop);
   },
   async install(a) { return install(a.flags); },
   async uninstall() {
+    await stopRunningAgent();
     await uninstallAgent({ ...defaults(), ...realIo, userPath: await userPath() });
     console.log('ollabatch removed from your PATH and from starting at login.');
   },
