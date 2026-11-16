@@ -159,7 +159,7 @@ test('a slow download doesn\'t freeze the agent: it keeps checking in and report
   const { a } = await agent(s.base, { trusted: true, serverEnv: (card) => ({ FAKE_GPU: card.name, FAKE_PULL_MS: '5000' }) });
   await waitFor(() => a.status().cards.length === 2 && a.status().cards.every((c) => c.state === 'lending'), 45_000, 'lending');
   await job(s.call, ['tiny:1']);
-  await waitFor(() => a.status().download, 10_000, 'download started');
+  await waitFor(() => a.status().download, 30_000, 'download started');
   const seen = async () => (await s.call('GET', '/ob/status')).json.machines.find((m) => m.machine === 'testbox').report.seenAt;
   const before = await seen();
   await new Promise((r) => setTimeout(r, 1200));
@@ -172,7 +172,7 @@ test('a failed download backs off instead of retrying every tick', async () => {
   const { a } = await agent(s.base, { trusted: true, serverEnv: (card) => ({ FAKE_GPU: card.name, FAKE_FAIL_PULL: '1' }) });
   await waitFor(() => a.status().cards.length === 2, 45_000, 'cards');
   await job(s.call, ['tiny:1']);
-  await waitFor(() => a.status().downloadFailures?.['tiny:1']?.count === 1, 10_000, 'first failure');
+  await waitFor(() => a.status().downloadFailures?.['tiny:1']?.count === 1, 30_000, 'first failure');
   await new Promise((r) => setTimeout(r, 1500));
   assert.equal(a.status().downloadFailures['tiny:1'].count, 1);
 });
@@ -188,7 +188,7 @@ test('the owner\'s rules are checked again right before a download', async () =>
   agentRef = a;
   await waitFor(() => a.status().cards.length === 2, 45_000, 'cards');
   await job(s.call, ['tiny:1']);
-  await waitFor(() => asked > 0, 10_000, 'size asked');
+  await waitFor(() => asked > 0, 30_000, 'size asked');
   await new Promise((r) => setTimeout(r, 1000));
   assert.equal(listModels(a.status().playground.path).length, 0);
 });

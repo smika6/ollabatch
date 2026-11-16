@@ -30,9 +30,10 @@ export class RequestQueue {
   // ── client side ──────────────────────────────────────────────────────────
   // `signal`: the client went away (timed out, retried, exited) — drop the
   // request instead of running it on a GPU for nobody.
-  enqueue({ jobId = '_', path, body, signal }) {
+  // leaseMs: a shorter lease for this request (summaries give a card 2 minutes).
+  enqueue({ jobId = '_', path, body, signal, leaseMs }) {
     return new Promise((resolve) => {
-      const r = { id: String(this.nextId++), jobId, path, body, attempts: 0, triedBy: new Set(), resolve, enqueuedAt: this.now() };
+      const r = { id: String(this.nextId++), jobId, path, body, attempts: 0, triedBy: new Set(), resolve, enqueuedAt: this.now(), leaseMs };
       if (signal) {
         if (signal.aborted) return resolve({ status: 499, body: JSON.stringify({ error: 'client gone' }) });
         signal.addEventListener('abort', () => this.#abort(r), { once: true });
@@ -146,9 +147,8 @@ export class RequestQueue {
   // Call periodically: re-queue requests whose worker went quiet. Expiries
   // count as attempts, so a request no card can finish isn't re-run forever.
   expireLeases() {
-    const cutoff = this.now() - this.leaseMs;
     for (const r of [...this.leased.values()]) {
-      if (r.leasedAt >= cutoff) continue;
+      if (r.leasedAt >= this.now() - (r.leaseMs ?? this.leaseMs)) continue;
       if (r.attempts >= this.maxAttempts) {
         this.leased.delete(r.id);
         r.resolve({ status: 502, body: JSON.stringify({ error: `ollabatch: gave up after ${r.attempts} attempts — last: lease expired` }) });

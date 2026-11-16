@@ -15,6 +15,7 @@ import { Metrics } from './metrics.mjs';
 import { Insights } from './insights.mjs';
 import { parseStats } from './infer.mjs';
 import { addRequestToJob, prune, trimLog, filterHistory, toCsv, timelineAdd } from './history.mjs';
+import { buildPrompt } from './summary.mjs';
 import { parseSelector, matchesSelector } from './labels.mjs';
 import { chooseModel, modelForCard, rewriteModel } from './models.mjs';
 import { advance, etaSeconds, queueEta } from './progress.mjs';
@@ -64,7 +65,8 @@ export async function startHost({
 
   const state = readJson(files.state) || {};
   const store = JobStore.fromJSON(state.jobs, { now, isAlive: pidAlive });
-  const userLabels = state.cardLabels || {};   // cardKey → { k: v }, set from the dashboard/CLI
+  const userLabels = state.cardLabels || {};
+  const settings = { summaries: 'manual', summaryModel: null, ...(state.settings || {}) };   // cardKey → { k: v }, set from the dashboard/CLI
   const metrics = Metrics.fromJSON(readJson(files.metrics), { now });
   files.insights = path.join(stateDir, 'insights.json');
   const insights = Insights.fromJSON(readJson(files.insights), { now });
@@ -92,13 +94,14 @@ export async function startHost({
   };
   const canServe = (w, jobId) => {
     if (jobId === '_') return true;
+    if (jobId === '_summary') return summaryCard(w);
     const job = store.get(jobId);
     return !!job && job.status === 'running' && hasModel(w, job) && cardFits(w, job);
   };
-  const queue = new RequestQueue({ now, canServe, rankOf: (id) => (id === '_' ? Infinity : store.rankOf(id)) });
+  const queue = new RequestQueue({ now, canServe, rankOf: (id) => (id === '_summary' ? Infinity : id === '_' ? Number.MAX_SAFE_INTEGER : store.rankOf(id)) });
   const liveCards = () => queue.activeWorkers().filter((w) => !w.paused);
 
-  const saveState = () => writeJsonAtomic(files.state, { jobs: store.toJSON(), cardLabels: userLabels });
+  const saveState = () => writeJsonAtomic(files.state, { jobs: store.toJSON(), cardLabels: userLabels, settings });
   const saveMetrics = () => {
     try { writeJsonAtomic(files.metrics, metrics.toJSON()); writeJsonAtomic(files.insights, insights.toJSON()); }
     catch (e) { log(`! couldn't save metrics: ${e.message}`); }
@@ -388,6 +391,53 @@ export async function startHost({
     fs.rmSync(path.join(files.logs, `${id}.log`), { force: true });
     fs.rmSync(timelineFile(id), { force: true });
   }
+
+  // ── summaries ────────────────────────────────────────────────────────────
+  // Only cards the pool's owner controls see a job's log: the host's own
+  // machine, or machines whose owner let the pool manage them. And only when
+  // they have nothing else to do, without swapping out a loaded model.
+  const trustedCard = (w) => w.host === 'local' || w.machine === os.hostname() || reports.get(w.machine)?.remote === true;
+  function summaryCard(w) {
+    if (!trustedCard(w) || w.paused) return false;
+    if (queue.pending.some((r) => r.jobId !== '_summary' && canServe(w, r.jobId))) return false;
+    const loaded = reports.get(w.machine)?.cards?.find((c) => c.workerId === w.id)?.loadedModel;
+    return !loaded || summaryModels.has(loaded);
+  }
+  const summaryModels = new Set();
+  function pickSummaryModel(job) {
+    const cards = queue.activeWorkers().filter(trustedCard);
+    if (job.model && cards.some((w) => w.models.includes(job.model))) return job.model;
+    if (settings.summaryModel) return settings.summaryModel;
+    const counts = {};
+    for (const w of cards) for (const mdl of w.models) counts[mdl] = (counts[mdl] || 0) + 1;
+    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+  }
+  async function summarize(job) {
+    const model = pickSummaryModel(job);
+    if (!model) { job.summaryError = 'no trusted card with a model is online'; return; }
+    const { system, user } = buildPrompt(job, logTail(job, 400));
+    job.summaryState = 'running';
+    summaryModels.add(model);
+    try {
+      const r = await queue.enqueue({ jobId: '_summary', path: '/api/chat', leaseMs: 120_000, signal: AbortSignal.timeout(60 * 60_000),
+        body: JSON.stringify({ model, stream: false, options: { temperature: 0.2 }, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }) });
+      const text = r.status >= 200 && r.status < 300 ? JSON.parse(r.body).message?.content?.trim() : null;
+      if (text) { job.summary = { text: text.slice(0, 4000), model, at: now(), source: 'pool' }; job.summaryError = null; }
+      else job.summaryError = `the summary request failed (${r.status})`;
+    } catch (e) {
+      job.summaryError = e.message;
+    } finally {
+      job.summaryState = null;
+      summaryModels.delete(model);
+      saver.schedule();
+    }
+  }
+  onJobFinished = (job) => {
+    if (job.summary?.source === 'job' || settings.summaries === 'off') return;
+    const t = job.template && templates.find((x) => x.id === job.template);
+    if (settings.summaries === 'auto' || t?.summary) summarize(job).catch(() => {});
+  };
+
   function pruneHistory() {
     for (const id of prune({ jobs: store.list(), now: now() })) forget(id);
     saver.schedule();
@@ -521,6 +571,19 @@ export async function startHost({
       return send(res, 200, metrics.series({ by, minutes }));
     }
     if (req.method === 'POST' && p === '/ob/jobs') return send(res, 200, publicJob(newJob(await readJsonBody(req), loopback)));
+    if (p === '/ob/settings') {
+      if (req.method === 'GET') return send(res, 200, settings);
+      if (req.method === 'PUT') {
+        const b = await readJsonBody(req);
+        if (b.summaries != null) {
+          if (!['off', 'manual', 'auto'].includes(b.summaries)) throw new HttpError(400, 'summaries is off, manual or auto');
+          settings.summaries = b.summaries;
+        }
+        if (b.summaryModel !== undefined) settings.summaryModel = b.summaryModel ? String(b.summaryModel) : null;
+        saver.schedule();
+        return send(res, 200, settings);
+      }
+    }
     if (req.method === 'GET' && p === '/ob/history') {
       const sp = url.searchParams;
       const r = filterHistory(store.list(), { q: sp.get('q'), status: sp.get('status'), template: sp.get('template'),
@@ -560,6 +623,13 @@ export async function startHost({
           return fs.existsSync(file) ? fs.createReadStream(file).pipe(res) : res.end('');
         }
         return send(res, 200, logTail(job, Math.min(5000, Number(url.searchParams.get('tail')) || 200), url.searchParams.get('q')), 'text/plain; charset=utf-8');
+      }
+      if (req.method === 'POST' && m[2] === 'summarize') {
+        if (settings.summaries === 'off') throw new HttpError(409, 'summaries are switched off in the host settings');
+        if (!['done', 'failed', 'cancelled'].includes(job.status)) throw new HttpError(409, 'only finished jobs can be summarized');
+        if (job.summaryState === 'running') return send(res, 200, { started: false, running: true });
+        summarize(job).catch(() => {});
+        return send(res, 200, { started: true });
       }
       if (req.method === 'POST' && m[2] === 'progress') {
         if (!loopback) throw new HttpError(403, 'progress comes from the job itself');
