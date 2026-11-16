@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startJob } from '../src/runner.mjs';
 
-const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
+const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'testdata');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rigpool runner '));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const job = (args, extra = {}) => ({ id: 'j9', command: process.execPath, args, cwd: tmp(), env: {}, shell: false, model: null, ...extra });
