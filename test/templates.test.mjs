@@ -13,9 +13,9 @@ function fixture(obj) {
 }
 
 const TAG = {
-  id: 'tag', name: 'Tag ${catalog}', command: 'node', args: ['scripts/tag.js', '--catalog', '${catalog}'],
-  cwd: 'work', env: { CATALOG: '${catalog}', FIXED: 'x' }, models: ['gemma4:12b'],
-  params: [{ name: 'catalog', values: ['royals', 'global'], default: 'royals' }, { name: 'mode', values: ['fast', 'full'] }],
+  id: 'tag', name: 'Label ${split}', command: 'node', args: ['label.js', '--split', '${split}'],
+  cwd: 'work', env: { SPLIT: '${split}', FIXED: 'x' }, models: ['gemma4:12b'],
+  params: [{ name: 'split', values: ['train', 'eval'], default: 'train' }, { name: 'mode', values: ['fast', 'full'] }],
 };
 
 test('missing file → no templates', () => {
@@ -38,22 +38,22 @@ test('loads templates and resolves a relative cwd against the file', () => {
 test('instantiate substitutes params in name, args and env', () => {
   const { file } = fixture({ templates: [TAG] });
   const [t] = loadTemplates(file);
-  const job = instantiate(t, { catalog: 'global', mode: 'fast' });
-  assert.equal(job.name, 'Tag global');
-  assert.deepEqual(job.args, ['scripts/tag.js', '--catalog', 'global']);
-  assert.deepEqual(job.env, { CATALOG: 'global', FIXED: 'x' });
+  const job = instantiate(t, { split: 'eval', mode: 'fast' });
+  assert.equal(job.name, 'Label eval');
+  assert.deepEqual(job.args, ['label.js', '--split', 'eval']);
+  assert.deepEqual(job.env, { SPLIT: 'eval', FIXED: 'x' });
   assert.equal(job.command, 'node');
   assert.equal(job.template, 'tag');
 });
 
 test('a value outside the allowed list throws', () => {
   const [t] = loadTemplates(fixture({ templates: [TAG] }).file);
-  assert.throws(() => instantiate(t, { catalog: 'evil; rm -rf', mode: 'fast' }), /catalog/);
+  assert.throws(() => instantiate(t, { split: 'evil; rm -rf', mode: 'fast' }), /split/);
 });
 
 test('a missing param uses its default, else throws', () => {
   const [t] = loadTemplates(fixture({ templates: [TAG] }).file);
-  assert.equal(instantiate(t, { mode: 'full' }).name, 'Tag royals');
+  assert.equal(instantiate(t, { mode: 'full' }).name, 'Label train');
   assert.throws(() => instantiate(t, {}), /mode/);
 });
 
@@ -63,6 +63,6 @@ test('a bad progressPattern or a non-string arg is rejected at load', () => {
 });
 
 test('command never comes from params', () => {
-  const [t] = loadTemplates(fixture({ templates: [{ ...TAG, command: '${catalog}' }] }).file);
-  assert.equal(instantiate(t, { catalog: 'global', mode: 'fast' }).command, '${catalog}');
+  const [t] = loadTemplates(fixture({ templates: [{ ...TAG, command: '${split}' }] }).file);
+  assert.equal(instantiate(t, { split: 'eval', mode: 'fast' }).command, '${split}');
 });

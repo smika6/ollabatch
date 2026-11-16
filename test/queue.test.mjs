@@ -5,7 +5,7 @@ import { RequestQueue } from '../src/queue.mjs';
 const ok = (body = '{"ok":1}') => ({ status: 200, body });
 const req = (body, jobId = 'j1') => ({ jobId, path: '/api/chat', body });
 
-// ── ported from MapleCloset's JobQueue suite ────────────────────────────────
+// ── core queue behaviour ────────────────────────────────
 
 test('a waiting worker gets a request the moment a client enqueues it', async () => {
   const q = new RequestQueue();

@@ -1,7 +1,7 @@
 // The host: job queue, scheduler, request router, dashboard and state, in one
 // process. Jobs run here as local commands; every inference request they make
 // goes to /j/<job>/api/* on loopback and is routed to a card whose labels match
-// the job. Cards pull work over /pool/* (MapleCloset's tag-pool protocol, kept
+// the job. Cards pull work over /pool/* (the original worker protocol, kept
 // compatible), so worker machines open no ports.
 import http from 'node:http';
 import os from 'node:os';
@@ -324,7 +324,7 @@ export async function startHost({
     if (req.method === 'GET' && STATIC[p]) {
       try { return send(res, 200, fs.readFileSync(path.join(DASHBOARD, p.slice(1))), STATIC[p]); } catch { return send(res, 404, 'not found', 'text/plain'); }
     }
-    // Legacy status for MapleCloset's tools: no commands, no env.
+    // Legacy status for older join clients: no commands, no env.
     if (req.method === 'GET' && p === '/pool/status') {
       return send(res, 200, { ...queue.status(), progress: null, jobs: store.list().map((j) => ({ id: j.id, name: j.name, status: j.status, progress: j.progress })) });
     }
