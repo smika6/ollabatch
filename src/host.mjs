@@ -195,7 +195,7 @@ export async function startHost({
   };
   const send = (res, status, body, type = 'application/json') => {
     res.writeHead(status, { 'Content-Type': type });
-    res.end(typeof body === 'string' ? body : JSON.stringify(body));
+    res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
   };
   const isLoopback = (req) => LOOPBACK.has(req.socket.remoteAddress);
   const authed = (req, url) => isLoopback(req) || req.headers['x-pool-token'] === token || url.searchParams.get('token') === token;
@@ -272,7 +272,8 @@ export async function startHost({
     let html;
     try { html = fs.readFileSync(path.join(DASHBOARD, 'index.html'), 'utf8'); } catch { return send(res, 404, 'dashboard not built', 'text/plain'); }
     // The host's own browser gets the password baked in; other devices type it once.
-    return send(res, 200, html.replace('__RIGPOOL_TOKEN__', isLocal ? JSON.stringify(token).slice(1, -1) : ''), 'text/html; charset=utf-8');
+    const attr = (s) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    return send(res, 200, html.replace('__RIGPOOL_TOKEN__', isLocal ? attr(token) : ''), 'text/html; charset=utf-8');
   }
 
   async function route(req, res) {

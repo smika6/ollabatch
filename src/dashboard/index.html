@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>rigpool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-token="__RIGPOOL_TOKEN__">
+<header class="top">
+  <div class="brand">rigpool</div>
+  <p class="summary" id="summary">Connecting to the host…</p>
+</header>
+
+<section id="gate" class="gate" hidden>
+  <h2>Enter the pool password</h2>
+  <p>It was printed when the host started, and it's saved in <code>.rigpool/token</code> on the host. This device remembers it.</p>
+  <form id="gateForm" class="row">
+    <input id="gateInput" type="password" autocomplete="current-password" placeholder="Pool password" aria-label="Pool password">
+    <button class="primary" type="submit">Unlock</button>
+  </form>
+  <p class="error" id="gateError" hidden>That password didn't work.</p>
+</section>
+
+<main id="app" hidden>
+  <div class="stats" id="stats"></div>
+
+  <div class="split">
+    <section class="queue" aria-labelledby="queueTitle">
+      <div class="head">
+        <h2 id="queueTitle">Queue</h2>
+        <button id="addToggle" aria-expanded="false" aria-controls="addForm">Add job</button>
+      </div>
+      <form id="addForm" class="add" hidden></form>
+      <ol id="jobs" class="jobs"></ol>
+    </section>
+
+    <section class="rack" aria-labelledby="rackTitle">
+      <div class="head"><h2 id="rackTitle">Machines</h2></div>
+      <div id="machines"></div>
+    </section>
+  </div>
+
+  <section class="graphs" aria-labelledby="graphTitle">
+    <div class="head">
+      <h2 id="graphTitle">Throughput</h2>
+      <div class="seg" role="group" aria-label="Time range">
+        <button data-range="60" class="on">1 hour</button><button data-range="360">6 hours</button><button data-range="1440">24 hours</button>
+      </div>
+    </div>
+    <figure>
+      <svg id="rateChart" class="chart" role="img" aria-label="Items per minute by card"></svg>
+      <figcaption id="rateLegend" class="legend"></figcaption>
+    </figure>
+    <figure>
+      <svg id="latChart" class="chart small" role="img" aria-label="Average seconds per item by card"></svg>
+      <figcaption class="note">Average seconds per item, per card.</figcaption>
+    </figure>
+  </section>
+
+  <section class="join" aria-labelledby="joinTitle">
+    <h2 id="joinTitle">Add a machine</h2>
+    <p>On the other machine, with Ollama running and this repo cloned:</p>
+    <div class="cmd"><code id="joinCmd"></code><button id="copyJoin">Copy</button></div>
+    <p class="note">Give it labels to steer jobs, for example <code>--labels owner=sam,vram=8</code>. It shows up under Machines within a few seconds.</p>
+  </section>
+</main>
+
+<dialog id="logDialog" class="log">
+  <div class="head"><h2 id="logTitle">Log</h2><button id="logClose">Close</button></div>
+  <pre id="logText"></pre>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
