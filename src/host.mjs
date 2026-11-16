@@ -360,6 +360,11 @@ export async function startHost({
       const accepted = finish(url.searchParams.get('job'), url.searchParams.get('worker'), await readJsonBody(req));
       return send(res, accepted ? 200 : 410, { accepted });
     }
+    if (req.method === 'POST' && p === '/pool/release') {
+      const b = await readJsonBody(req);
+      if (!Array.isArray(b.ids)) throw new HttpError(400, 'ids must be a list');
+      return send(res, 200, { released: queue.release(String(b.worker), b.ids.map(String)) });
+    }
     if (req.method === 'POST' && p === '/pool/pause') {
       const b = await readJsonBody(req);
       if (!queue.setPaused(b.id, b.paused)) throw new HttpError(404, 'unknown card');

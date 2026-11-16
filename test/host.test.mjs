@@ -182,6 +182,21 @@ test('a request that arrives after its job was cancelled is refused', async () =
   assert.equal(s.host.queue.status().queued, 0);
 });
 
+test('POST /pool/release hands a request back and it is served again', async () => {
+  const s = await setup();
+  await s.call('POST', '/pool/register', { id: 'gamer', label: 'gamer', slots: 1, models: ['fake'] });
+  const fake = await startFakeOllama();
+  cleanup.push(() => fake.close());
+  const pending = s.call('POST', '/api/chat', { model: 'fake', stream: false, messages: [] });
+  const lease = await s.call('GET', '/pool/work?worker=gamer');
+  assert.equal(lease.status, 200);
+  const rel = await s.call('POST', '/pool/release', { worker: 'gamer', ids: [lease.json.id], reason: 'owner paused' });
+  assert.deepEqual(rel.json, { released: 1 });
+  const w = await pullWorker(s.base, { id: 'other', ollama: fake.url, token: 'secret-pw' });
+  cleanup.push(() => w.stop());
+  assert.equal((await pending).status, 200);
+});
+
 test('reorder, pause/resume and rerun through the control API', async () => {
   const s = await setup();
   const a = (await s.call('POST', '/rp/jobs', loopbackJob({ name: 'a', args: [CALL, '1'] }))).json;

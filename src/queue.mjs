@@ -128,6 +128,21 @@ export class RequestQueue {
     return true;
   }
 
+  // The card's owner wants it back (a game started): hand its requests back
+  // without spending an attempt, so pausing can never fail a job.
+  release(workerId, ids) {
+    let n = 0;
+    for (const id of ids) {
+      const r = this.leased.get(id);
+      if (!r || r.workerId !== workerId) continue;
+      r.attempts--;
+      r.triedBy.delete(workerId);
+      this.#requeue(r, 'released');
+      n++;
+    }
+    return n;
+  }
+
   // Call periodically: re-queue requests whose worker went quiet. Expiries
   // count as attempts, so a request no card can finish isn't re-run forever.
   expireLeases() {

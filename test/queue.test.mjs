@@ -241,6 +241,27 @@ test('an aborted request leaves the queue and its late result is refused', async
   assert.equal(q.complete(r.id, 'w', ok()), false);
 });
 
+test('release re-queues without spending an attempt', async () => {
+  const q = new RequestQueue({ maxAttempts: 1 });
+  q.register('gamer'); q.register('other');
+  const result = q.enqueue(req('x'));
+  const r = await q.take('gamer');
+  assert.equal(q.release('gamer', [r.id]), 1);
+  const again = await q.take('other');
+  assert.equal(again.id, r.id);
+  q.complete(again.id, 'other', ok());
+  assert.equal((await result).status, 200);
+});
+
+test('release ignores requests held by another worker', async () => {
+  const q = new RequestQueue();
+  q.register('a'); q.register('b');
+  q.enqueue(req('x'));
+  const r = await q.take('a');
+  assert.equal(q.release('b', [r.id, 'nope']), 0);
+  assert.equal(q.status().inflight, 1);
+});
+
 test('status carries machine, labels and the latest job', async () => {
   const q = new RequestQueue();
   q.register('w', { machine: 'desk', labels: { gpu: 'nvidia' } });
