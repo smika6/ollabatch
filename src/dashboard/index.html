@@ -12,6 +12,7 @@
 <header class="top">
   <div class="brand">ollabatch</div>
   <p class="summary" id="summary">Connecting to the host…</p>
+  <button id="notifyToggle" class="ghost" aria-pressed="false">Notify me</button>
 </header>
 
 <section id="gate" class="gate" hidden>
@@ -26,6 +27,7 @@
 
 <main id="app" hidden>
   <div class="stats" id="stats"></div>
+  <p id="thrash" class="warn" role="status" hidden></p>
 
   <div class="split">
     <section class="queue" aria-labelledby="queueTitle">
@@ -43,21 +45,90 @@
     </section>
   </div>
 
-  <section class="graphs" aria-labelledby="graphTitle">
+  <section class="history" aria-labelledby="histTitle">
     <div class="head">
-      <h2 id="graphTitle">Throughput</h2>
-      <div class="seg" role="group" aria-label="Time range">
-        <button data-range="60" class="on">1 hour</button><button data-range="360">6 hours</button><button data-range="1440">24 hours</button>
+      <h2 id="histTitle">History</h2>
+      <div class="row">
+        <label class="inline">AI summaries
+          <select id="summaries"><option value="off">off</option><option value="manual">when I ask</option><option value="auto">after every job</option></select></label>
+        <button id="exportCsv">Export CSV</button><button id="exportJson">Export JSON</button>
       </div>
     </div>
-    <figure>
-      <svg id="rateChart" class="chart" role="img" aria-label="Items per minute by card"></svg>
-      <figcaption id="rateLegend" class="legend"></figcaption>
-    </figure>
-    <figure>
-      <svg id="latChart" class="chart small" role="img" aria-label="Average seconds per item by card"></svg>
-      <figcaption class="note">Average seconds per item, per card.</figcaption>
-    </figure>
+    <form id="histFilter" class="filters">
+      <input id="hq" type="search" placeholder="Search names, models, summaries, notes" aria-label="Search history">
+      <select id="hstatus" aria-label="Result"><option value="">any result</option><option value="done">done</option><option value="failed">failed</option><option value="cancelled">cancelled</option></select>
+      <select id="htemplate" aria-label="Template"><option value="">any template</option></select>
+      <label class="inline">From <input type="date" id="hfrom"></label>
+      <label class="inline">To <input type="date" id="hto"></label>
+    </form>
+    <div class="tablewrap">
+      <table class="hist">
+        <thead><tr><th>Job</th><th>Result</th><th>Finished</th><th class="n">Ran</th><th class="n">Items</th><th>Model</th><th>Cards</th><th class="n">Tokens out</th><th>Summary</th></tr></thead>
+        <tbody id="histRows"></tbody>
+      </table>
+    </div>
+    <button id="histMore" hidden>Show older</button>
+  </section>
+
+  <section class="graphs" aria-labelledby="graphTitle">
+    <div class="head">
+      <h2 id="graphTitle">Insights</h2>
+      <div class="row">
+        <div class="seg" id="byPick" role="group" aria-label="Split by">
+          <button data-v="card" class="on">by card</button><button data-v="model">by model</button><button data-v="job">by job</button>
+        </div>
+        <div class="seg" id="rangePick" role="group" aria-label="Time range">
+          <button data-v="1h" class="on">1 h</button><button data-v="6h">6 h</button><button data-v="24h">24 h</button><button data-v="7d">7 d</button><button data-v="30d">30 d</button>
+        </div>
+      </div>
+    </div>
+    <div class="charts">
+      <figure id="itemsFig">
+        <figcaption>Items finished per minute, by card</figcaption>
+        <svg id="rateChart" class="chart" role="img" aria-label="Items per minute by card"></svg>
+        <div id="rateLegend" class="legend"></div>
+      </figure>
+      <figure>
+        <figcaption>Output tokens per second</figcaption>
+        <svg id="tokChart" class="chart" role="img" aria-label="Output tokens per second"></svg>
+        <div id="tokLegend" class="legend"></div>
+      </figure>
+      <figure>
+        <figcaption>Tokens read (prompt) and written (output)</figcaption>
+        <svg id="ioChart" class="chart small" role="img" aria-label="Prompt and output tokens"></svg>
+        <div class="legend"><span><i class="k-focus"></i>prompt</span><span><i class="k-amber"></i>output</span></div>
+      </figure>
+      <figure>
+        <figcaption>Model loads, per card</figcaption>
+        <svg id="loadChart" class="chart auto" role="img" aria-label="Model loads per card over time"></svg>
+        <p class="note" id="loadNote"></p>
+      </figure>
+      <figure>
+        <figcaption>Time per request: median (solid) and slowest 10% (dashed)</figcaption>
+        <svg id="latChart" class="chart small" role="img" aria-label="Request time"></svg>
+        <div id="latLegend" class="legend"></div>
+      </figure>
+      <figure>
+        <figcaption>Time waiting in the queue for a card</figcaption>
+        <svg id="waitChart" class="chart small" role="img" aria-label="Queue wait"></svg>
+      </figure>
+      <figure>
+        <figcaption>Slot use per card</figcaption>
+        <svg id="slotChart" class="chart small" role="img" aria-label="Slot use per card"></svg>
+        <p class="note" id="slotNote"></p>
+      </figure>
+      <figure>
+        <figcaption>Failures and retries</figcaption>
+        <svg id="failChart" class="chart small" role="img" aria-label="Failures and retries"></svg>
+        <p class="note" id="failNote"></p>
+      </figure>
+    </div>
+    <div class="tablewrap">
+      <table class="models">
+        <thead><tr><th>Model</th><th class="n">Requests</th><th class="n">Failed</th><th class="n">Tokens in</th><th class="n">Tokens out</th><th class="n">Output tok/s</th><th class="n">Loads</th></tr></thead>
+        <tbody id="modelRows"></tbody>
+      </table>
+    </div>
   </section>
 
   <section class="join" aria-labelledby="joinTitle">
@@ -68,6 +139,7 @@
     <div class="seg" role="group" aria-label="Operating system">
       <button data-os="win" class="on">Windows</button><button data-os="unix">macOS / Linux</button>
     </div>
+    <label class="switch"><input type="checkbox" id="trustedPc"> <span>This is one of my own PCs: let the pool manage it from this dashboard. <span class="note">Leave it off for someone else's PC; its owner keeps the controls.</span></span></label>
     <div class="cmd"><code id="installCmd"></code><button data-copy="installCmd">Copy</button></div>
     <p class="note">The installer comes from this host over your home network. It puts <code>ollabatch</code> on that computer's PATH and starts its agent at login, with no admin rights.</p>
     <details><summary class="note">Already have the <code>ollabatch</code> command and want to join one card by hand?</summary>
@@ -76,10 +148,9 @@
   </section>
 </main>
 
-<dialog id="logDialog" class="log">
-  <div class="head"><h2 id="logTitle">Log</h2><button id="logClose">Close</button></div>
-  <pre id="logText"></pre>
-</dialog>
+<dialog id="jobDrawer" class="drawer" aria-label="Job details"><div id="drawerBody"></div></dialog>
+<dialog id="cardDialog" class="drawer" aria-label="Card graphs"><div id="cardBody"></div></dialog>
+<div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script type="module" src="app.js"></script>
 </body>

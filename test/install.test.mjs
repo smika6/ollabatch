@@ -100,6 +100,8 @@ test('the host serves the installers with its URL and no password, and the app a
     assert.ok(text.includes(url), `${p} names the host`);
     assert.ok(!text.includes('secret-pw'), `${p} carries no password`);
     assert.ok(!/[^\x00-\x7f]/.test(text), `${p} is ASCII`);
+    assert.ok(!text.includes('__INSTALL_ARGS__') && !text.includes('--trusted'), `${p} is untrusted by default`);
+    assert.match(await (await fetch(`${url}${p}?trusted=1`)).text(), /install --trusted/, `${p}?trusted=1 installs trusted`);
   }
   const tar = Buffer.from(await (await fetch(`${url}/ollabatch.tar`)).arrayBuffer());
   assert.equal(tar.length % 512, 0);

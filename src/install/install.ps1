@@ -24,7 +24,7 @@
   if (-not (Test-Path $winTar)) { $winTar = 'tar' }
   & $winTar -xf $tar -C $app
   Remove-Item $tar
-  & node (Join-Path $app 'bin\ollabatch.mjs') install
+  & node (Join-Path $app 'bin\ollabatch.mjs') install __INSTALL_ARGS__
   Write-Host 'Done. ollabatch runs at login; its page opens now so you can lend this PC.' -ForegroundColor Green
   for ($i = 0; $i -lt 30; $i++) {
     try { Invoke-WebRequest 'http://127.0.0.1:11510/status' -UseBasicParsing -TimeoutSec 1 | Out-Null; break } catch { Start-Sleep -Milliseconds 500 }

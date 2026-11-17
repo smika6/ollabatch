@@ -41,7 +41,9 @@ const INFERENCE = /^\/api\/(chat|generate|show|embed|embeddings)$/;
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const LOCAL_NAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
-const STATIC = { '/app.js': 'text/javascript', '/view.mjs': 'text/javascript', '/style.css': 'text/css' };
+// Dashboard files by name only (no slashes, no dots but the extension), so a path can't leave the folder.
+const STATIC = /^\/[a-z][a-z-]*\.(mjs|js|css)$/;
+const MIME = { mjs: 'text/javascript', js: 'text/javascript', css: 'text/css' };
 const JOB_ACTIONS = new Set(['move', 'pause', 'resume', 'cancel', 'rerun']);
 
 class HttpError extends Error {
@@ -241,7 +243,10 @@ export async function startHost({
       // Active jobs plus the 20 most recent finished ones; the rest is in /ob/history.
       jobs: recentJobs().map(publicJob), queueEta: queueEta(store.list()),
       perSec: s.perSec, queued: s.queued, inflight: s.inflight, done: s.done, models: s.models,
-      workers: all, machines: [...byMachine].map(([machine, list]) => ({ machine, cards: list, report: reports.get(machine) || null })),
+      // Each machine with what the dashboard asked of it, so controls can show
+      // "waiting for the PC" until its agent reports the change.
+      workers: all, machines: [...byMachine].map(([machine, list]) => ({ machine, cards: list, report: reports.get(machine) || null,
+        desired: remote.desired(machine), commands: remote.commands(machine).slice(0, 8) })),
       templates: templates.map((t) => ({ id: t.id, name: t.name, params: t.params, models: t.models || [], selector: t.selector || '' })),
       settings: { maxRunning }, canCreate: isLoopback,
     };
@@ -470,15 +475,17 @@ export async function startHost({
     }
 
     if (req.method === 'GET' && (p === '/' || p === '/pool')) return dashboard(res, loopback);
-    if (req.method === 'GET' && STATIC[p]) {
-      try { return send(res, 200, fs.readFileSync(path.join(DASHBOARD, p.slice(1))), STATIC[p]); } catch { return send(res, 404, 'not found', 'text/plain'); }
+    if (req.method === 'GET' && (m = STATIC.exec(p))) {
+      try { return send(res, 200, fs.readFileSync(path.join(DASHBOARD, p.slice(1))), MIME[m[1]]); } catch { return send(res, 404, 'not found', 'text/plain'); }
     }
     // One-command installers and the app itself, for machines joining for the
     // first time. Open source and secret-free, so no password.
     if (req.method === 'GET' && (p === '/install.ps1' || p === '/install.sh')) {
       const h = req.headers.host || '';
       if (!/^[A-Za-z0-9.\-]+(:\d+)?$/.test(h)) throw new HttpError(400, 'bad Host header');
-      const text = fs.readFileSync(path.join(INSTALLERS, p.slice(1)), 'utf8').replaceAll('__HOST__', `http://${h}`);
+      // ?trusted=1: one of the pool owner's own PCs, which the pool may then manage.
+      const text = fs.readFileSync(path.join(INSTALLERS, p.slice(1)), 'utf8').replaceAll('__HOST__', `http://${h}`)
+        .replaceAll('__INSTALL_ARGS__', url.searchParams.get('trusted') === '1' ? '--trusted' : '');
       return send(res, 200, text, 'text/plain; charset=utf-8');
     }
     if (req.method === 'GET' && p === '/ollabatch.tar') {

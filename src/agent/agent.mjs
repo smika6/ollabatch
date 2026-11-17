@@ -399,6 +399,7 @@ export async function startAgent({
     } catch (e) {
       const f = (failures[model] ??= { count: 0, until: 0 });
       f.count++;
+      f.error = ac.signal.aborted ? 'it stalled for 2 minutes' : e.message;
       f.until = now() + Math.min(RETRY_BASE_MS * 2 ** (f.count - 1), RETRY_MAX_MS);
       log(`! download of ${model} failed (${ac.signal.aborted ? 'stalled' : e.message}); next try in ${Math.round((f.until - now()) / 60_000)} min`);
       cleanPartial(cfg.playground.path);   // drops half-written manifests; keeps Ollama's partial blobs so a retry resumes
@@ -416,17 +417,17 @@ export async function startAgent({
     const u = usage(pg.path, all);
     return {
       machine, os: platform, agent: VERSION, policy: cfg.policy, watcher: watch.supported !== false,
-      remote: !!cfg.remote, trusted: !!cfg.trusted, appliedVersion: cfg.remoteVersion, localOverride,
+      remote: !!cfg.remote, trusted: !!cfg.trusted, appliedVersion: cfg.remoteVersion, localOverride, schedule: cfg.schedule,
       cards: [...cards.values()].map((c) => ({
         id: c.card.id, workerId: c.worker ? workerId(c.card.id) : null, name: c.card.name, vendor: c.card.vendor,
         vramMB: c.card.vramMB, freeMB: c.card.freeMB, util: c.card.util, tempC: c.card.tempC, powerW: c.card.powerW,
         display: c.card.display, state: c.state, reason: c.reason, slots: c.server?.slots ?? null,
-        fixedSlots: cardCfg(c.card.id).slots ?? 'auto', loadedModel: c.loaded?.[0] ?? null, loadedModels: c.loaded ?? [],
+        fixedSlots: cardCfg(c.card.id).slots ?? 'auto', paused: !!cardCfg(c.card.id).paused, disabled: !!cardCfg(c.card.id).disabled, loadedModel: c.loaded?.[0] ?? null, loadedModels: c.loaded ?? [],
         tuning: c.tuner ? (c.tuner.phase === 'measuring' ? `trying ${c.tuner.slots}` : 'tuned') : null,
       })),
       playground: { path: pg.path, limitGB: pg.limitGB, usedBytes: u.usedBytes, downloads: pg.downloads,
         models: u.models.map((m) => ({ ...m, locked: pg.locked.includes(m.name) })) },
-      download,
+      download, downloadFailures: Object.fromEntries(Object.entries(failures).map(([m, f]) => [m, { count: f.count, until: f.until, error: f.error ?? null }])),
     };
   }
 

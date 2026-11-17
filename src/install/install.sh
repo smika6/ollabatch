@@ -14,7 +14,7 @@ APP="$HOME/.ollabatch/app"
 mkdir -p "$APP"
 echo "Downloading ollabatch from $HOST ..."
 curl -fsSL "$HOST/ollabatch.tar" | tar -xf - -C "$APP"
-node "$APP/bin/ollabatch.mjs" install
+node "$APP/bin/ollabatch.mjs" install __INSTALL_ARGS__
 echo "Done. ollabatch runs at login; its page opens now so you can lend this machine."
 echo "Open a new terminal to use the ollabatch command."
 i=0; while [ $i -lt 30 ] && ! curl -fs http://127.0.0.1:11510/status >/dev/null 2>&1; do sleep 0.5; i=$((i + 1)); done

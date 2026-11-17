@@ -94,3 +94,14 @@ test('the host keeps per-job stats, a timeline, notes, logs and history', async 
   assert.equal((await call('DELETE', `/ob/jobs/${j.id}`)).status, 200);
   assert.equal((await call('GET', `/ob/jobs/${j.id}`)).status, 404);
 });
+
+test('history search also finds models used, summaries and notes', () => {
+  const jobs = [
+    { id: 'a', name: 'one', status: 'done', finishedAt: 3, modelsUsed: ['gemma4:12b'] },
+    { id: 'b', name: 'two', status: 'done', finishedAt: 2, summary: { text: 'Three items timed out.' } },
+    { id: 'c', name: 'three', status: 'failed', finishedAt: 1, notes: 'rerun after the driver update' },
+  ];
+  assert.deepEqual(filterHistory(jobs, { q: 'GEMMA' }).jobs.map((j) => j.id), ['a']);
+  assert.deepEqual(filterHistory(jobs, { q: 'timed out' }).jobs.map((j) => j.id), ['b']);
+  assert.deepEqual(filterHistory(jobs, { q: 'driver' }).jobs.map((j) => j.id), ['c']);
+});

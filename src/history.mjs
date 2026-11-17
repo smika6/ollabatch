@@ -46,7 +46,7 @@ export function trimLog(file, maxBytes = 20 * 1024 * 1024) {
 export function filterHistory(jobs, { q, status, template, from, to, limit = 50, before } = {}) {
   const needle = q ? String(q).toLowerCase() : null;
   let list = jobs.filter((j) => FINISHED.has(j.status))
-    .filter((j) => !needle || [j.name, j.template, j.id].some((x) => String(x ?? '').toLowerCase().includes(needle)))
+    .filter((j) => !needle || [j.name, j.template, j.id, j.model, ...(j.modelsUsed || []), j.summary?.text, j.notes].some((x) => String(x ?? '').toLowerCase().includes(needle)))
     .filter((j) => !status || j.status === status)
     .filter((j) => !template || j.template === template)
     .filter((j) => from == null || (j.finishedAt || 0) >= Number(from))
