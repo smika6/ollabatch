@@ -11,6 +11,12 @@ update the host, `git pull` and restart it.
 - Mac GPU power and thermal pressure from `powermetrics`, once its owner
   allows that one command to run without a password (see the README); the
   dashboard shows "thermal nominal" where a temperature would be.
+- Card errors say what Ollama said ("HTTP 500: ..."), when it happened, and
+  out of how many requests; an old error fades from the card after 30 minutes.
+- A request that fails the same way on two different cards goes back to the
+  job instead of being tried on every card: it's the request's fault.
+- The agent writes a log, `~/.ollabatch/agent/agent.log`, including every
+  card's state change and every slot-tuning restart.
 
 ## 0.2.0 (2026-11-17)
 
