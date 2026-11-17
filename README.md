@@ -154,7 +154,11 @@ and per card lending on/off, requests at once, Restart server and Re-tune.
 Agents only ever connect out, so a change waits until the PC's next check
 (about 10 seconds) and shows "waiting for the PC" until it lands, or
 "changed back on the PC" if its owner changed it there since. Requests the PC
-never picks up expire after 10 minutes.
+never picks up expire after 10 minutes. Two things stay the PC's: a policy set from the
+dashboard still steps a card aside while a fullscreen program uses it, and a
+download asked for from the dashboard keeps to the PC's own rules (downloads
+allowed, fits a card, fits its model space and free disk). Joining a different
+pool turns management off until the owner allows it again.
 
 ## How it works
 
