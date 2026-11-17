@@ -156,6 +156,9 @@ test('an Intel Arc gets temperature, power and use from Intel\'s control library
   assert.equal(arc().powerW, 35.7);
   assert.equal(arc().util, 3);
   assert.equal(a.status().cards.find((c) => c.name.includes('5080')).tempC, 69, 'nvidia-smi still owns NVIDIA cards (its fixture says 69°C)');
+  // Intel named the Arc's adapter, so Windows' memory counter (upper-case hex) applies at once, with no work done yet.
+  watch.emit({ fg: null, engines: [], procs: [], mem: [{ luid: '0x00000000_0x000151FA', bytes: 4 * 1024 ** 3 }] });
+  await waitFor(() => arc().freeMB === arc().vramMB - 4096, 10_000, 'memory from the counter');
 });
 
 test('a failed nvidia-smi read never adds a duplicate of an NVIDIA card', async () => {

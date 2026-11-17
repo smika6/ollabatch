@@ -494,11 +494,19 @@ export async function startAgent({
       if ([...cards.values()].some((c) => c.card.source === 'nvidia-smi')) {
         found = found.filter((c) => c.vendor !== 'nvidia' || c.source === 'nvidia-smi');
       }
+      // An Intel card's adapter is named by Intel's library straight away; other
+      // cards' adapters are learned once their server works.
+      if (Date.now() - intelTel.at < 20_000) {
+        for (const card of found) {
+          const d = card.vendor === 'intel' && !luids[card.id] ? intelFor(card, intelTel.devices, null) : null;
+          if (d?.luid) luids = { ...luids, [card.id]: d.luid };
+        }
+      }
       // Cards nvidia-smi doesn't cover (Intel Arc, AMD on Windows): use and
       // memory from Windows' own per-adapter counters, once we know the adapter.
       if (Date.now() - adapters.at < 20_000) {
         found = found.map((card) => {
-          const st = card.source === 'windows' && luids[card.id] ? adapters.stats[luids[card.id]] ?? { util: 0, usedBytes: null } : null;
+          const st = card.source === 'windows' && luids[card.id] ? adapters.stats[String(luids[card.id]).toLowerCase()] ?? { util: 0, usedBytes: null } : null;
           return st ? { ...card, util: st.util, freeMB: st.usedBytes == null ? null : Math.max(0, card.vramMB - Math.round(st.usedBytes / MB)) } : card;
         });
       }

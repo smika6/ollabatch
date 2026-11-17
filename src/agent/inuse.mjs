@@ -63,7 +63,7 @@ export function adapterStats(sample) {
   const out = {};
   const byType = {};
   for (const e of sample?.engines || []) {
-    const k = `${e.luid}|${e.engtype}`;
+    const k = `${String(e.luid).toLowerCase()}|${e.engtype}`;
     byType[k] = (byType[k] || 0) + (Number(e.util) || 0);
   }
   for (const [k, v] of Object.entries(byType)) {
@@ -71,7 +71,7 @@ export function adapterStats(sample) {
     (out[luid] ??= { util: 0, usedBytes: null }).util = Math.min(100, Math.max(out[luid].util, Math.round(v)));
   }
   for (const m of sample?.mem || []) {
-    const o = (out[m.luid] ??= { util: 0, usedBytes: null });
+    const o = (out[String(m.luid).toLowerCase()] ??= { util: 0, usedBytes: null });
     o.usedBytes = (o.usedBytes || 0) + (Number(m.bytes) || 0);
   }
   return out;
