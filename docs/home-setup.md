@@ -57,8 +57,10 @@ copy of ollabatch.
 ## 2. Every other computer: install the agent once
 
 On the computer you want to add (it needs Node.js 20+ and Ollama), open the
-dashboard (`http://<mac-address>:11500/`) and go to **Add a machine**. Copy the
-installer for that system and run it in a terminal:
+dashboard (`http://<mac-address>:11500/`) and go to **Add a machine**. If it's
+one of your own PCs, tick **This is one of my own PCs** first (the command
+gains `?trusted=1`). Copy the installer for that system and run it in a
+terminal:
 
 ```powershell
 irm http://<mac-address>:11500/install.ps1 | iex      # Windows (PowerShell)
@@ -79,8 +81,14 @@ Ollama per card pinned to it (the user's own Ollama is left alone), tunes how
 many requests each card takes, and steps a card aside while a fullscreen
 program uses it. Its page, `http://127.0.0.1:11510/`, is where that computer's
 owner pauses cards, sets when to lend and limits the disk models may use.
-Install it on your own machines with `ollabatch install --trusted` to let them
-download the models the pool needs without asking.
+Installed as trusted (the tick above, or `ollabatch install --trusted`), a
+machine downloads the models the pool needs without asking, and the
+dashboard can manage it: each machine on the dashboard gets **Manage** for its
+lending rules, model space, downloads and models, and each card gets lending
+on/off, requests at once, Restart server and Re-tune. Someone else's PC (a
+partner's, a roommate's) stays theirs: install it without the tick, and only
+its own page changes it, unless its owner ticks **Let the pool manage this
+PC** there.
 
 The rest of this guide is for setting machines up **by hand, without the
 agent**.
@@ -163,6 +171,20 @@ For several GPUs on Linux, pin one `ollama serve` per card with
 - Joined machines keep retrying while the host is down and carry on when it
   comes back.
 
+## Watching it run
+
+- **Queue**: each job's progress, speed and time left ("2h 10m left, around
+  03:40"). **Details** opens a job's full record.
+- **History**: every finished job, searchable, with an optional AI summary
+  (History settings) and CSV/JSON export.
+- **Insights**: tokens per second, model loads, request and queue times, slot
+  use and failures over 1 hour to 30 days. A card that keeps switching models
+  gets a warning: that's minutes lost per switch.
+- **Machines**: each card's temperature, memory and use as small graphs;
+  click them for the card's history.
+- **Notify me** (on the Mac's own `127.0.0.1` page): a notification when a job
+  finishes or fails. Every page shows those alerts in-page anyway.
+
 ## When something's off
 
 | You see | Check |
@@ -171,3 +193,8 @@ For several GPUs on Linux, pin one `ollama serve` per card with
 | A job says "waiting for cards" | No online card matches its selector or has its model. Compare the job's "needs" line with the card's labels and models under Machines. |
 | `the host rejected the pool password` | The password is the one given to `ollabatch host`, also saved in `.ollabatch/token` in the folder the host runs from. |
 | Nothing can reach the Mac | The macOS firewall is blocking node (step 1.4), or the PC is on a guest network. |
+| A change from the dashboard says "waiting for the PC" | The PC's agent checks in every 10 seconds; if it stays, the PC is off or its agent isn't running. |
+| "changed back on the PC" | Its owner changed that setting on the PC after you did. Theirs stands until you change it again. |
+| A machine says "managed by its owner" | Its owner hasn't ticked **Let the pool manage this PC** on its page (`http://127.0.0.1:11510/` on that PC). |
+| A summary says "no trusted card with a model is online" | Summaries only run on the Mac's own GPU or on PCs the pool manages, and need a model there. |
+| The model-switching warning | Several jobs with different models share a card. Give them one model, or selectors that keep them on separate cards. |

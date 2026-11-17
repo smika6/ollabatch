@@ -8,7 +8,13 @@ jobs on one machine, let any computer running [Ollama](https://ollama.com)
 join and take work, and watch and steer it all from one dashboard.
 
 - **A real queue.** Add, reorder, pause, cancel and re-run jobs. ETAs per job
-  and for the whole queue, speed graphs per card.
+  and for the whole queue, in minutes and clock time ("around 03:40").
+- **History you can search.** Every finished job keeps its stats, cards,
+  tokens, model loads, errors, notes and log, with an optional AI summary
+  written by your own GPUs. Export it as CSV or JSON.
+- **Insights.** Tokens per second, prompt vs output, model loads (and a
+  warning when a card keeps switching models), request and queue times, slot
+  use and failures, by card, model or job, from the last hour to 30 days.
 - **Cards join from anywhere on your LAN** with one command. They only connect
   out, so no ports to open on them. Faster cards automatically take more work.
 - **Labels steer jobs.** Tag cards (`gpu=nvidia`, `vram=16`, `owner=sam`) and
@@ -18,6 +24,9 @@ join and take work, and watch and steer it all from one dashboard.
 - **Your machine stays yours.** Each machine runs a small agent with its own
   page, where its owner pauses cards, sets when to lend (default: step aside
   while a fullscreen game or video runs) and caps the disk models may use.
+- **Your own PCs, from one place.** For PCs whose owner allows it (yours),
+  the dashboard changes lending rules, slots and models, and restarts or
+  re-tunes cards, with temperature, memory and use graphed per card.
 - **It sets each card up itself.** The agent finds every GPU, runs one pinned
   Ollama per card, finds how many requests each card handles best by
   measuring, and reuses models already on the machine instead of copying them.
@@ -77,8 +86,14 @@ or several GPUs joining, what the agent does on each):
 machine. Its page, `http://127.0.0.1:11510/`, answers only that machine:
 
 - **Cards**: each GPU's state and why (lending, paused, stepped aside for a
-  fullscreen program, off schedule), with Pause / Resume and lending on/off
-  per card. The pool's dashboard can't override the owner.
+  fullscreen program, off schedule), with Pause / Resume, lending on/off,
+  requests at once (measured, or fixed at 1 to 8), Restart and Re-tune per
+  card, and which models it has in memory.
+- **Let the pool manage this PC**: off unless the agent was installed as
+  trusted. With it off, the pool's dashboard can't change anything here. With
+  it on, the dashboard can change the settings on this page and restart,
+  re-tune or download; a change made here later always wins over an older one
+  from the pool.
 - **When to lend**: when the GPU is free (Windows: a card steps aside while a
   fullscreen program uses it and comes back 3 minutes after), always, on a
   schedule, or never.
@@ -90,8 +105,56 @@ machine. Its page, `http://127.0.0.1:11510/`, answers only that machine:
   climbs while it pays off, backing down if it runs short of memory or slows.
 
 The dashboard's Machines view shows every agent's hardware (VRAM, free memory,
-temperature, power; "unknown" where a driver doesn't report it), slots and
-playground.
+temperature, power; "unknown" where a driver doesn't report it), slots,
+models in memory and playground, with sparklines for temperature, memory and
+use; click one for that card's graphs over up to 30 days.
+
+## History and AI summaries
+
+**History** lists finished jobs (search by name, model, summary or notes;
+filter by result, template and dates; export CSV or JSON). **Details** on any
+job opens its record: result and exit code, how long it ran, items over
+time, each card's share, tokens in and out, output speed, model loads,
+retries and the last errors, your notes, and its log with search and
+download. The host keeps up to 2,000 finished jobs for 90 days and trims each
+log to its last 20 MB.
+
+**AI summaries** (History settings: off, when I ask, after every job) are a
+few plain sentences on what a job did and what went wrong, written by a model
+on your cards. They wait behind real work, and they only run on cards you
+control (the host's own machine, or PCs whose owner lets the pool manage
+them), because the prompt includes the end of the job's log. Lines that look
+like keys, tokens or passwords are removed first, and a job's environment is
+never sent. A job can also write its own summary:
+`POST {"summary": "..."}` to its `OLLABATCH_PROGRESS_URL`.
+
+The page can also tell you when a job finishes or fails: alerts on the page
+always, and browser notifications with **Notify me** on the host's own page
+(browsers only allow them on `127.0.0.1` or https).
+
+## Insights
+
+Every answer from Ollama carries its own stats; the host records them per
+minute for 24 hours and per hour for 30 days. The Insights section graphs
+output tokens per second, prompt vs output tokens, model loads per card,
+time per request and time waiting in the queue (median and slowest 10%), slot
+use per card and failures, split by card, model or job, plus a per-model
+table. A card loading models more than 6 times an hour gets a warning: give
+its jobs one model, or a selector that keeps them on separate cards.
+
+## Managing your own PCs
+
+Install the agent on your own PCs as trusted: tick **This is one of my own
+PCs** under **Add a machine** before copying the installer (it adds
+`?trusted=1`), or run `ollabatch install --trusted`. For those PCs (and any
+PC whose owner ticks **Let the pool manage this PC** on its page), each
+machine on the dashboard gets **Manage**: lending rules and schedule, model
+space, downloads, its models (lock, unlock, remove, download one by name),
+and per card lending on/off, requests at once, Restart server and Re-tune.
+Agents only ever connect out, so a change waits until the PC's next check
+(about 10 seconds) and shows "waiting for the PC" until it lands, or
+"changed back on the PC" if its owner changed it there since. Requests the PC
+never picks up expire after 10 minutes.
 
 ## How it works
 
@@ -161,7 +224,10 @@ ollabatch is for your home network. The pool password (`--password`, or a
 random one saved in `.ollabatch/token`) is required to join a card or use the
 dashboard from another device. The model API is only reachable from the host
 itself (and only to programs, not to web pages open in a browser there), and
-jobs' environment variables never leave the host. One read-only endpoint,
+jobs' environment variables never leave the host. Job logs are only sent to
+cards for AI summaries when those cards are on the host or on PCs whose owner
+lets the pool manage them, and with secret-looking lines removed. The
+dashboard can change a PC's settings only if its owner allows it on that PC. One read-only endpoint,
 `/pool/status`, stays open for older join clients: it shows card names, their
 IPs, models and job names to anyone on your network. Don't expose the port to
 the internet.
@@ -179,9 +245,9 @@ ollabatch uninstall
 ollabatch agent [--host url] [--password pw] [--trusted]   |   ollabatch agent status
 ```
 
-`--trusted` lets the agent download models without asking (for your own
-machines); otherwise downloads stay off until the machine's owner allows them
-on its page.
+`--trusted` is for your own machines: the agent may download models without
+asking, and the pool may manage the PC from its dashboard. Otherwise both stay
+off until the machine's owner turns them on on its page.
 
 `submit`, `ls` and the job commands talk to `--host` (default
 `http://127.0.0.1:11500`); from another machine add `--password`.
@@ -192,6 +258,8 @@ on its page.
 2. **Machine agent** (shipped): finds its GPUs, runs a pinned Ollama per card,
    tunes slots, manages a model playground, steps aside for fullscreen
    programs, one-command install and a Lend button.
+   Then **insights and controls** (shipped): job history and AI summaries,
+   inference and hardware graphs, and managing your own PCs from the dashboard.
 3. **Job files and placement**: job manifests you commit, smarter model
    placement and swapping across cards.
 4. **Pooled memory**: run one model too big for any single card across
