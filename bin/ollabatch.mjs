@@ -44,7 +44,8 @@ async function stopRunningAgent() {
 
 async function install(f) {
   await stopRunningAgent();
-  const r = await installAgent({ ...defaults(), ...realIo, binPath: BIN, trusted: !!f.trusted, userPath: await userPath() });
+  // Config first: installAgent starts the agent right away, and an agent that
+  // started before this was saved would read no host and then save over it.
   if (f.host || f.trusted) {
     const dir = path.join(os.homedir(), '.ollabatch', 'agent');
     const cfg = loadConfig(dir, { trusted: !!f.trusted });
@@ -54,6 +55,7 @@ async function install(f) {
     if (f.trusted) Object.assign(cfg, { trusted: true, remote: true });
     saveConfig(dir, cfg);
   }
+  const r = await installAgent({ ...defaults(), ...realIo, binPath: BIN, trusted: !!f.trusted, userPath: await userPath() });
   console.log(`ollabatch is on your PATH (${r.binDir}); open a new terminal to use it.`);
   console.log('The agent starts at login. Its page: http://127.0.0.1:11510/');
 }
