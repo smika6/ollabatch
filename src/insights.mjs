@@ -5,19 +5,20 @@ const MIN = 60_000, HOUR = 60 * MIN;
 const RANGES = { '1h': [MIN, 60], '6h': [MIN, 360], '24h': [MIN, 1440], '7d': [HOUR, 168], '30d': [HOUR, 720] };
 const KEEP = 200;   // wait/latency samples kept per bucket for percentiles
 
-const emptyAgg = () => ({ requests: 0, failed: 0, retried: 0, promptTokens: 0, outputTokens: 0, genSec: 0, loads: 0, loadSec: 0, waits: [], lats: [] });
+// switches: loads of a different model than the card last answered with (reloading the same one isn't a switch).
+const emptyAgg = () => ({ requests: 0, failed: 0, retried: 0, promptTokens: 0, outputTokens: 0, genSec: 0, loads: 0, loadSec: 0, switches: 0, waits: [], lats: [] });
 const pct = (arr, p) => {
   if (!arr.length) return null;
   const s = [...arr].sort((a, b) => a - b);
   return s[Math.max(0, Math.ceil(p * s.length) - 1)];
 };
 function addTo(a, b) {
-  for (const k of ['requests', 'failed', 'retried', 'promptTokens', 'outputTokens', 'genSec', 'loads', 'loadSec']) a[k] += b[k];
+  for (const k of ['requests', 'failed', 'retried', 'promptTokens', 'outputTokens', 'genSec', 'loads', 'loadSec', 'switches']) a[k] += b[k] || 0;
   a.waits = a.waits.concat(b.waits).slice(-KEEP);
   a.lats = a.lats.concat(b.lats).slice(-KEEP);
 }
 const point = (a) => ({ requests: a.requests, failed: a.failed, retried: a.retried, promptTokens: a.promptTokens, outputTokens: a.outputTokens,
-  genSec: +a.genSec.toFixed(3), loads: a.loads, loadSec: +a.loadSec.toFixed(3),
+  genSec: +a.genSec.toFixed(3), loads: a.loads, loadSec: +a.loadSec.toFixed(3), switches: a.switches || 0,
   waitP50: pct(a.waits, 0.5), waitP90: pct(a.waits, 0.9), latP50: pct(a.lats, 0.5), latP90: pct(a.lats, 0.9) });
 
 export class Insights {
@@ -55,6 +56,7 @@ export class Insights {
   record({ card, job, model, ok, retried, waitSec, latencySec, stats }) {
     const b = this.#bucket();
     const m = stats?.model || model || 'unknown';
+    const switched = !!(stats?.loaded && stats.model && this.lastModel[card] && this.lastModel[card] !== stats.model);
     if (ok && stats?.model) this.lastModel[card] = stats.model;
     for (const key of [`card:${card}`, `model:${m}`, `job:${job}`]) {
       const a = (b.rows[key] ??= emptyAgg());
@@ -66,6 +68,7 @@ export class Insights {
         a.outputTokens += stats.outputTokens || 0;
         a.genSec += stats.genSec || 0;
         if (stats.loaded) { a.loads++; a.loadSec += stats.loadSec || 0; }
+        if (switched) a.switches = (a.switches || 0) + 1;
       }
       if (waitSec != null && a.waits.length < KEEP) a.waits.push(+waitSec.toFixed(3));
       if (latencySec != null && a.lats.length < KEEP) a.lats.push(+latencySec.toFixed(3));
@@ -105,9 +108,11 @@ export class Insights {
     return this.#grouped(range).slots.map((s) => s.cards[cardId] || null);
   }
 
-  loadsLastHour(cardId) {
+  loadsLastHour(cardId) { return this.#lastHour(cardId, 'loads'); }
+  switchesLastHour(cardId) { return this.#lastHour(cardId, 'switches'); }
+  #lastHour(cardId, k) {
     const since = this.clock() - HOUR;
-    return this.minutes.filter((b) => b.t > since).reduce((s, b) => s + (b.rows[`card:${cardId}`]?.loads || 0), 0);
+    return this.minutes.filter((b) => b.t > since).reduce((s, b) => s + (b.rows[`card:${cardId}`]?.[k] || 0), 0);
   }
 
   now() {

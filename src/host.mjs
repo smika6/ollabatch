@@ -13,7 +13,7 @@ import { RequestQueue } from './queue.mjs';
 import { JobStore, JobStateError } from './jobs.mjs';
 import { Metrics } from './metrics.mjs';
 import { Insights } from './insights.mjs';
-import { parseStats } from './infer.mjs';
+import { parseStats, LoadCounter } from './infer.mjs';
 import { addRequestToJob, prune, trimLog, filterHistory, toCsv, timelineAdd } from './history.mjs';
 import { buildPrompt } from './summary.mjs';
 import { RemoteStore } from './remote.mjs';
@@ -108,6 +108,7 @@ export async function startHost({
   files.insights = path.join(stateDir, 'insights.json');
   const insights = Insights.fromJSON(readJson(files.insights), { now });
   const remote = RemoteStore.fromJSON(state.remote, { now });
+  const loadCounter = new LoadCounter();
   let onRequestDone = null;   // set by job stats (history)
   const templates = loadTemplates(jobsFile);
   const selectors = new Map();                 // jobId → parsed selector
@@ -234,7 +235,7 @@ export async function startHost({
     if (accepted && lease) {
       const ok = result.status >= 200 && result.status < 300;
       metrics.record({ cardId: workerId, jobId: lease.jobId, ok, ms: now() - lease.leasedAt });
-      const stats = ok ? parseStats(result.body, result.contentType) : null;
+      const stats = ok ? loadCounter.dedupe(workerId, parseStats(result.body, result.contentType), now()) : null;
       insights.record({ card: workerId, job: lease.jobId, model: stats?.model, ok, retried: lease.attempts > 1,
         waitSec: (lease.leasedAt - lease.enqueuedAt) / 1000, latencySec: (now() - lease.leasedAt) / 1000, stats });
       onRequestDone?.(lease, workerId, ok, stats, result);
@@ -626,7 +627,9 @@ export async function startHost({
     }
     if (req.method === 'GET' && p === '/ob/insights/now') {
       const n = insights.now();
-      return send(res, 200, { ...n, loadsLastHour: Object.fromEntries([...queue.workers.keys()].map((id) => [id, insights.loadsLastHour(id)])) });
+      const ids = [...queue.workers.keys()];
+      return send(res, 200, { ...n, loadsLastHour: Object.fromEntries(ids.map((id) => [id, insights.loadsLastHour(id)])),
+        switchesLastHour: Object.fromEntries(ids.map((id) => [id, insights.switchesLastHour(id)])) });
     }
     if (req.method === 'GET' && (m = p.match(/^\/ob\/insights\/cards\/([^/]+)$/))) {
       return send(res, 200, { range: url.searchParams.get('range') || '1h', samples: insights.cardSeries(decode(m[1]), url.searchParams.get('range') || '1h') });

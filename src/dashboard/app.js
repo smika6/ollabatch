@@ -172,7 +172,7 @@ async function tick() {
   try {
     S.status = await call('GET', '/ob/status');
     showGate(false);
-    S.loadsLastHour = I.now?.loadsLastHour;
+    S.switchesLastHour = I.now?.switchesLastHour;
     S.loadedModels = I.now?.loadedModels;
     renderSummary(S.status); renderJobs(S.status); renderMachines(); renderAddForm(S.status);
     fillTemplates(S.status.templates);

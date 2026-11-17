@@ -134,7 +134,7 @@ export function renderMachines() {
     patch($('machines'), [{ key: 'empty', html: '<p class="empty">No machines yet. Use “Add a machine” below on any computer with Ollama.</p>' }]);
     return;
   }
-  const thrash = new Set(thrashing(S.loadsLastHour));
+  const thrash = new Set(thrashing(S.switchesLastHour));
   patch($('machines'), s.machines.map((m) => {
     const on = m.cards.filter((c) => c.active).length;
     const lentIds = new Set(m.cards.map((c) => c.id));

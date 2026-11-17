@@ -122,9 +122,9 @@ function renderModelTable(r) {
 }
 
 export function renderThrash() {
-  const bad = thrashing(I.now?.loadsLastHour);
+  const bad = thrashing(I.now?.switchesLastHour);
   $('thrash').hidden = !bad.length;
-  $('thrash').innerHTML = bad.length ? `<b>${bad.map((id) => esc(cardLabel(id))).join(', ')}</b> loaded models more than 6 times in the last hour. ${esc(THRASH_TEXT)}` : '';
+  $('thrash').innerHTML = bad.length ? `<b>${bad.map((id) => esc(cardLabel(id))).join(', ')}</b> switched models more than 6 times in the last hour. ${esc(THRASH_TEXT)}` : '';
 }
 
 export function initInsights(onChange) {

@@ -110,7 +110,9 @@ export function pendingFields(machine) {
 }
 export const PENDING_TEXT = { pending: 'waiting for the PC', override: 'changed back on the PC' };
 
-export const thrashing = (loadsLastHour, limit = 6) => Object.entries(loadsLastHour || {}).filter(([, n]) => n > limit).map(([id]) => id);
+// Cards that switched models more than `limit` times in the last hour. Reloading
+// the same model (a restart, the slot tuner trying a new count) isn't switching.
+export const thrashing = (switchesLastHour, limit = 6) => Object.entries(switchesLastHour || {}).filter(([, n]) => n > limit).map(([id]) => id);
 export const THRASH_TEXT = 'This card keeps switching models. Give its jobs one model, or a selector that keeps them on separate cards.';
 
 const CMD_TEXT = { 'restart-card': 'restart', retune: 're-tune', pull: 'download', 'remove-model': 'remove' };

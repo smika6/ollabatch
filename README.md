@@ -139,7 +139,8 @@ minute for 24 hours and per hour for 30 days. The Insights section graphs
 output tokens per second, prompt vs output tokens, model loads per card,
 time per request and time waiting in the queue (median and slowest 10%), slot
 use per card and failures, split by card, model or job, plus a per-model
-table. A card loading models more than 6 times an hour gets a warning: give
+table. A card switching models more than 6 times an hour gets a warning (reloading
+the same model after a restart or a slot change doesn't count): give
 its jobs one model, or a selector that keeps them on separate cards.
 
 ## Managing your own PCs
