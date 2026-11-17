@@ -38,7 +38,7 @@ function renderCards() {
     <div class="top1"><span class="label">${esc(c.name)}</span><span class="state">${esc(STATE_TEXT[c.state] || c.state)}</span></div>
     <div class="meta">${c.backend ? `<span>${esc(c.backend)}</span>` : ''}<span>${esc(c.vramMB ? `${(c.vramMB / 1024).toFixed(0)} GB${c.vendor === 'apple' ? ' shared' : ''}` : '')}</span>
       <span>${esc(unknown(c.freeMB, (f) => `${(f / 1024).toFixed(1)} GB free`))}</span><span>use ${esc(unknown(c.util, (u) => `${u}%`))}</span>
-      <span>temperature ${esc(unknown(c.tempC, (t) => `${t}°C`))}</span><span>power ${esc(unknown(c.powerW, (w) => `${Math.round(w)} W`))}</span>
+      <span>${c.tempC == null && c.thermal ? `thermal ${esc(c.thermal)}` : `temperature ${esc(unknown(c.tempC, (t) => `${t}°C`))}`}</span><span>power ${esc(unknown(c.powerW, (w) => `${Math.round(w)} W`))}</span>
       ${c.slots ? `<span>${esc(c.slots)} at once${c.fixedSlots !== 'auto' ? ' (fixed)' : c.tuning ? ` (${esc(c.tuning)})` : ''}</span>` : ''}
       ${c.loadedModel ? `<span>in memory: ${esc(c.loadedModels.join(', '))}</span>` : ''}</div>
     ${c.reason ? `<div class="note">${esc(c.reason)}</div>` : ''}

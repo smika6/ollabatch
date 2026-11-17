@@ -50,7 +50,7 @@ export function hardwareMeta(r) {
   if (r.backend) out.push(r.backend);
   if (r.vramMB) out.push(`${Math.round(r.vramMB / 1024)} GB${r.vendor === 'apple' ? ' shared' : ''}`);
   out.push(r.freeMB == null ? 'free memory unknown' : `${(r.freeMB / 1024).toFixed(1)} GB free`);
-  out.push(r.tempC == null ? 'temperature unknown' : `${r.tempC}°C`);
+  out.push(r.tempC != null ? `${r.tempC}°C` : r.thermal ? `thermal ${r.thermal}` : 'temperature unknown');
   out.push(r.util == null ? 'use unknown' : `${Math.round(r.util)}% use`);
   out.push(r.powerW == null ? 'power unknown' : `${Math.round(r.powerW)} W`);
   if (r.slots) out.push(`${r.slots} at once${r.fixedSlots && r.fixedSlots !== 'auto' ? ', fixed' : r.tuning ? `, ${r.tuning}` : ''}`);

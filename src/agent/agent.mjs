@@ -19,6 +19,7 @@ import { recordServers, reapRecorded } from './reap.mjs';
 import { validSchedule } from '../remote.mjs';
 import { VERSION } from '../version.mjs';
 import { startIntelTelemetry, intelFor } from './inteltel.mjs';
+import { makeMacPower } from './macpower.mjs';
 
 const GB = 1024 ** 3, MB = 1024 ** 2;
 const STALL_MS = 120_000;                 // a download with no progress this long is abandoned
@@ -118,6 +119,8 @@ export async function startAgent({
   // Intel cards' temperature, power and use (Windows, Intel's control library).
   let intelTel = { at: 0, devices: [] };
   const intelReader = intel({ platform, onSample: (s) => { intelTel = { at: Date.now(), devices: s?.devices || [] }; } });
+  // An Apple GPU's power and the Mac's thermal pressure, where the owner allowed powermetrics.
+  const macPower = platform === 'darwin' ? makeMacPower({ run }) : null;
 
   const record = () => recordServers(serversFile,
     Object.fromEntries([...cards].filter(([, c]) => c.server?.child?.pid).map(([id, c]) => [id, c.server.child.pid])));
@@ -467,7 +470,7 @@ export async function startAgent({
         id: c.card.id, workerId: c.worker ? workerId(c.card.id) : null, name: c.card.name, vendor: c.card.vendor,
         vramMB: c.card.vramMB, freeMB: c.card.freeMB, util: c.card.util, tempC: c.card.tempC, powerW: c.card.powerW,
         display: c.card.display, state: c.state, reason: c.reason, slots: c.server?.slots ?? null,
-        backend: c.backend ?? null, fixedSlots: cardCfg(c.card.id).slots ?? 'auto', paused: !!cardCfg(c.card.id).paused, disabled: !!cardCfg(c.card.id).disabled, loadedModel: c.loaded?.[0] ?? null, loadedModels: c.loaded ?? [],
+        backend: c.backend ?? null, thermal: c.card.thermal ?? null, fixedSlots: cardCfg(c.card.id).slots ?? 'auto', paused: !!cardCfg(c.card.id).paused, disabled: !!cardCfg(c.card.id).disabled, loadedModel: c.loaded?.[0] ?? null, loadedModels: c.loaded ?? [],
         tuning: c.tuner ? (c.tuner.phase === 'measuring' ? `trying ${c.tuner.slots}` : 'tuned') : null,
       })),
       playground: { path: pg.path, limitGB: pg.limitGB, usedBytes: u.usedBytes, downloads: pg.downloads,
@@ -510,6 +513,8 @@ export async function startAgent({
           return st ? { ...card, util: st.util, freeMB: st.usedBytes == null ? null : Math.max(0, card.vramMB - Math.round(st.usedBytes / MB)) } : card;
         });
       }
+      const pm = macPower && found.some((c) => c.vendor === 'apple') ? await macPower.sample() : null;
+      if (pm) found = found.map((card) => (card.vendor === 'apple' ? { ...card, powerW: pm.powerW ?? card.powerW, util: card.util ?? pm.util, thermal: pm.thermal } : card));
       if (Date.now() - intelTel.at < 20_000) {
         found = found.map((card) => {
           if (card.vendor !== 'intel') return card;

@@ -161,6 +161,19 @@ test('an Intel Arc gets temperature, power and use from Intel\'s control library
   await waitFor(() => arc().freeMB === arc().vramMB - 4096, 10_000, 'memory from the counter');
 });
 
+test('a Mac reports its GPU\'s use, memory, power and thermal pressure through to the host', async () => {
+  const s = await host();
+  const PM = fs.readFileSync(path.join(DATA, 'probes', 'powermetrics.txt'), 'utf8');
+  const MAC = fs.readFileSync(path.join(DATA, 'probes', 'mac-displays.json'), 'utf8');
+  const IOREG = '"PerformanceStatistics" = {"In use system memory"=10737418240,"Device Utilization %"=91}';
+  const run = async (cmd) => ({ system_profiler: MAC, sysctl: String(64 * 1024 ** 3), ioreg: IOREG, sudo: PM })[cmd] ?? null;
+  const { a } = await agent(s.base, { run, platform: 'darwin' });
+  await waitFor(() => a.status().cards[0]?.powerW === 31.5, 30_000, 'power');
+  const c = a.status().cards[0];
+  assert.deepEqual([c.vendor, c.util, c.thermal, c.freeMB], ['apple', 91, 'nominal', 54 * 1024]);
+  await waitFor(async () => (await s.call('GET', '/ob/status')).json.machines.find((m) => m.machine === 'testbox')?.report?.cards[0]?.thermal === 'nominal', 15_000, 'reported');
+});
+
 test('a failed nvidia-smi read never adds a duplicate of an NVIDIA card', async () => {
   const s = await host();
   const WIN = fs.readFileSync(path.join(DATA, 'probes', 'win-adapters.json'), 'utf8');

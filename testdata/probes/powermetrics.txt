@@ -1,0 +1,16 @@
+Machine model: Mac15,9
+OS version: 24A335
+
+*** Sampled system activity (Mon Nov 17 08:52:10 2026 -0600) (1004.12ms elapsed) ***
+
+**** Thermal pressure ****
+
+Current pressure level: Nominal
+
+**** GPU usage ****
+
+GPU HW active frequency: 1398 MHz
+GPU HW active residency:  87.31% (338 MHz:   0% 618 MHz:   0% 796 MHz:   0% 924 MHz:   0% 952 MHz:   0% 1056 MHz:   0% 1062 MHz:   0% 1182 MHz:   0% 1182 MHz:   0% 1312 MHz:   0% 1242 MHz:   0% 1380 MHz:   0% 1326 MHz:   0% 1470 MHz:  87%)
+GPU SW requested state: (P1 :   0% P2 :   0% P3 :   0% P4 :   0% P5 :   0% P6 :   0% P7 :   0% P8 :   0% P9 :   0% P10 :   0% P11 :   0% P12 :   0% P13 :   0% P14 : 100%)
+GPU idle residency:  12.69%
+GPU Power: 31456 mW

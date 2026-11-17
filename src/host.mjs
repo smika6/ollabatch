@@ -71,7 +71,7 @@ export function cleanReport(b) {
       vramMB: num(c?.vramMB), freeMB: num(c?.freeMB), util: num(c?.util), tempC: num(c?.tempC), powerW: num(c?.powerW),
       display: bool(c?.display), state: str(c?.state, 40), reason: str(c?.reason), slots: num(c?.slots),
       fixedSlots: c?.fixedSlots === 'auto' || c?.fixedSlots == null ? 'auto' : num(c.fixedSlots), paused: bool(c?.paused), disabled: bool(c?.disabled),
-      backend: str(c?.backend, 20), loadedModel: str(c?.loadedModel, 200), loadedModels: list(c?.loadedModels).map((x) => str(x, 200)).slice(0, 16), tuning: str(c?.tuning, 40),
+      backend: str(c?.backend, 20), loadedModel: str(c?.loadedModel, 200), loadedModels: list(c?.loadedModels).map((x) => str(x, 200)).slice(0, 16), tuning: str(c?.tuning, 40), thermal: str(c?.thermal, 20),
     })),
     playground: pg && { path: str(pg.path, 500), limitGB: num(pg.limitGB), usedBytes: num(pg.usedBytes) ?? 0, downloads: bool(pg.downloads),
       models: list(pg.models).slice(0, 500).map((x) => ({ name: str(x?.name, 200), size: num(x?.size) ?? 0, linked: bool(x?.linked), locked: bool(x?.locked) })) },
