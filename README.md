@@ -107,7 +107,13 @@ machine. Its page, `http://127.0.0.1:11510/`, answers only that machine:
 The dashboard's Machines view shows every agent's hardware (VRAM, free memory,
 temperature, power; "unknown" where a driver doesn't report it), slots,
 models in memory and playground, with sparklines for temperature, memory and
-use; click one for that card's graphs over up to 30 days.
+use; click one for that card's graphs over up to 30 days. Where the numbers come from: `nvidia-smi` for
+NVIDIA; Intel's Graphics Control Library (installed with Arc drivers) for an
+Intel card's temperature, power and use on Windows; Windows' own counters for
+any other card's use and memory; `ioreg` for an Apple GPU's use and memory
+(macOS shows its temperature and power only to admin tools, so those read
+unknown). Each card also shows the backend its Ollama really uses (CUDA,
+Vulkan, Metal, MLX), from that server's log.
 
 ## History and AI summaries
 

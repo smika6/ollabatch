@@ -17,6 +17,7 @@ import { startCardWorker } from '../card-worker.mjs';
 import { listenBeacons, BEACON_PORT } from '../discovery.mjs';
 import { recordServers, reapRecorded } from './reap.mjs';
 import { validSchedule } from '../remote.mjs';
+import { startIntelTelemetry, intelFor } from './inteltel.mjs';
 
 const GB = 1024 ** 3, MB = 1024 ** 2;
 const STALL_MS = 120_000;                 // a download with no progress this long is abandoned
@@ -29,7 +30,7 @@ export async function startAgent({
   ollama = { command: 'ollama', args: [] }, serverEnv = () => ({}),
   userStore = process.env.OLLAMA_MODELS || path.join(os.homedir(), '.ollama', 'models'),
   now = Date.now, tickMs = 10_000, basePort = 11440, beaconPort = BEACON_PORT,
-  watcher = startWatcher, fetchRegistry = globalThis.fetch, log = () => {},
+  watcher = startWatcher, intel = startIntelTelemetry, fetchRegistry = globalThis.fetch, log = () => {},
 } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const serversFile = path.join(dir, 'servers.json');
@@ -113,6 +114,10 @@ export async function startAgent({
       inUse = cardsInUse(sample, { luids, ownPids: ownPids(sample, pids), cards: [...cards.values()].map((c) => c.card) });
     },
   });
+
+  // Intel cards' temperature, power and use (Windows, Intel's control library).
+  let intelTel = { at: 0, devices: [] };
+  const intelReader = intel({ platform, onSample: (s) => { intelTel = { at: Date.now(), devices: s?.devices || [] }; } });
 
   const record = () => recordServers(serversFile,
     Object.fromEntries([...cards].filter(([, c]) => c.server?.child?.pid).map(([id, c]) => [id, c.server.child.pid])));
@@ -497,6 +502,13 @@ export async function startAgent({
           return st ? { ...card, util: st.util, freeMB: st.usedBytes == null ? null : Math.max(0, card.vramMB - Math.round(st.usedBytes / MB)) } : card;
         });
       }
+      if (Date.now() - intelTel.at < 20_000) {
+        found = found.map((card) => {
+          if (card.vendor !== 'intel') return card;
+          const d = intelFor(card, intelTel.devices, luids[card.id]);
+          return d ? { ...card, tempC: d.tempC ?? card.tempC, powerW: d.powerW ?? card.powerW, util: card.util ?? d.util ?? null } : card;
+        });
+      }
       found.forEach((card, index) => {
         const c = cards.get(card.id);
         if (c) c.card = card; else cards.set(card.id, { card, index, server: null, worker: null, tuner: null, state: 'starting', reason: null });
@@ -575,6 +587,7 @@ export async function startAgent({
       closed = true;
       clearInterval(timer);
       watch.stop();
+      intelReader.stop();
       beacons.stop();
       for (const c of cards.values()) { await c.worker?.leave(); await c.server?.stop(); }
     },

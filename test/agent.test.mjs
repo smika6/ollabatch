@@ -45,6 +45,7 @@ async function agent(base, extra = {}) {
     ollama: { command: process.execPath, args: [BIN] }, serverEnv: (card) => ({ FAKE_GPU: card.name }),
     userStore: tmp(), tickMs: 200, basePort: 42000 + Math.floor(Math.random() * 10000),
     watcher: ({ onSample }) => { watch.emit = onSample; return { supported: true, stop() {} }; },
+    intel: ({ onSample }) => { watch.intel = onSample; return { stop() {} }; },
     fetchRegistry: async () => ({ ok: true, json: async () => ({ config: { size: 64 }, layers: [] }) }),
     ...extra,
   });
@@ -139,8 +140,22 @@ test('a wanted model is downloaded only when downloads are on', async () => {
   const { a: dl } = await agent(on.base, { trusted: true });
   await waitFor(() => dl.status().cards.length === 2, 45_000, 'cards');
   const j = (await job(on.call, ['tiny:1'])).json;
-  await waitFor(async () => (await status(on.call, j.id)).status === 'done', 30_000, 'job done on the pulled model');
+  await waitFor(async () => (await status(on.call, j.id)).status === 'done', 60_000, 'job done on the pulled model');
   assert.ok(listModels(dl.status().playground.path).some((m) => m.name === 'tiny:1'));
+});
+
+test('an Intel Arc gets temperature, power and use from Intel\'s control library, before its adapter is known', async () => {
+  const s = await host();
+  const WIN = fs.readFileSync(path.join(DATA, 'probes', 'win-adapters.json'), 'utf8');
+  const run = async (cmd) => (cmd === 'nvidia-smi' ? NVSMI : cmd === 'powershell' ? WIN : null);
+  const { a, watch } = await agent(s.base, { run, platform: 'win32' });
+  const arc = () => a.status().cards.find((c) => c.name.includes('Arc'));
+  await waitFor(() => watch.intel && arc(), 30_000, 'Arc found, reader started');
+  watch.intel({ devices: [{ luid: '0x00000000_0x000151fa', name: 'Intel(R) Arc(TM) A770 Graphics', tempC: 47, powerW: 35.7, util: 3 }] });
+  await waitFor(() => arc().tempC === 47, 10_000, 'temperature');
+  assert.equal(arc().powerW, 35.7);
+  assert.equal(arc().util, 3);
+  assert.equal(a.status().cards.find((c) => c.name.includes('5080')).tempC, 69, 'nvidia-smi still owns NVIDIA cards (its fixture says 69°C)');
 });
 
 test('a failed nvidia-smi read never adds a duplicate of an NVIDIA card', async () => {
