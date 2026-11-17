@@ -25,6 +25,7 @@ export function loadConfig(dir, { trusted = false } = {}) {
     changedAt: saved.changedAt ?? {},       // field → when the owner last changed it (this machine's clock)
     remoteSeen: saved.remoteSeen ?? {},     // field → the host's stamp of the last remote value handled
     remoteVersion: saved.remoteVersion ?? 0,
+    policyBy: saved.policyBy ?? 'owner',   // who set the policy in force: 'owner' or 'pool'
   };
 }
 

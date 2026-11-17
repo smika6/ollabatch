@@ -86,3 +86,24 @@ test('summaries switched off refuse the button', async () => {
   assert.equal((await s.call('POST', `/ob/jobs/${j.id}/summarize`)).status, 409);
   assert.equal((await s.call('GET', '/ob/settings')).json.summaries, 'off');
 });
+
+test('scrub also catches JSON keys, Authorization, URL credentials, --password and sk- keys; facts are scrubbed too', () => {
+  const out = scrub('{"password": "hunter2"}\nAuthorization: Basic dXNlcjpwYXNz\npostgres://admin:hunter2@db/x\nrun --password hunter2\nkey sk-abc12345678\ntokens: 4000 out');
+  assert.doesNotMatch(out, /hunter2|dXNlcjpwYXNz|sk-abc/);
+  assert.match(out, /tokens: 4000 out/, 'ordinary progress lines stay');
+  const p = buildPrompt({ name: 'sync --token abc123', status: 'failed', reason: 'api_key=zzz', stats: { lastErrors: ['card: Bearer qqq'] } }, '');
+  assert.doesNotMatch(`${p.system}${p.user}`, /abc123|zzz|qqq/);
+});
+
+test('a summary waiting when the host stopped is not "running" after a restart', async () => {
+  const dir = tmp();
+  const h = await startHost({ port: 0, password: 'secret-pw', stateDir: dir, beacon: false });
+  const call = api(`http://127.0.0.1:${h.port}`, 'secret-pw');
+  const j = (await quickJob(call)).json;
+  h.store.get(j.id).summaryState = 'running';
+  await h.close();
+  const h2 = await startHost({ port: 0, password: 'secret-pw', stateDir: dir, beacon: false });
+  cleanup.push(() => h2.close());
+  const d = (await api(`http://127.0.0.1:${h2.port}`, 'secret-pw')('GET', `/ob/jobs/${j.id}`)).json;
+  assert.equal(d.summaryState, undefined);
+});

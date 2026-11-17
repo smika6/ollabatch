@@ -51,7 +51,7 @@ test('a machine report shows in status and sets each card\'s owner state', async
   const st = (await s.call('GET', '/ob/status')).json;
   const m = st.machines.find((x) => x.machine === 'desk');
   assert.equal(m.report.cards.length, 2);
-  assert.equal(m.report.cards[1].tempC, undefined);
+  assert.equal(m.report.cards[1].tempC, null, 'not reported reads unknown');
   assert.deepEqual(st.workers.find((w) => w.id === 'desk-nv').owner, { state: 'paused-in-use', reason: 'a fullscreen program is using this GPU' });
 });
 

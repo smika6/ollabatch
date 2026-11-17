@@ -64,7 +64,7 @@ function bay(c, m, pend, thrash) {
   const job = c.jobId && c.jobId !== '_' ? jobs.find((j) => j.id === c.jobId) : null;
   const chips = Object.entries(c.labels).filter(([k]) => k !== 'machine' && !k.startsWith('model:'))
     .map(([k, v]) => `<span class="chip ${k in c.userLabels ? 'user' : ''}">${esc(k)}=${esc(v)}</span>`).join('');
-  const loaded = hw?.loadedModels?.length ? hw.loadedModels : S.loadedModels?.[c.id] ? [S.loadedModels[c.id]] : [];
+  const loaded = hw ? hw.loadedModels || [] : S.loadedModels?.[c.id] ? [S.loadedModels[c.id]] : [];
   const meta = [
     state,
     c.active && !c.paused ? `${rate(c.perSec * 60)}/min` : '',
@@ -94,7 +94,8 @@ function bay(c, m, pend, thrash) {
 }
 
 function idleBay(hw, m, pend) {
-  return idleBayHtml(hw).replace(/<\/div>\s*$/, `${sparks(key(m.machine, hw))}${cardControls(m, hw, pend)}</div>`);
+  const extra = `${sparks(key(m.machine, hw))}${cardControls(m, hw, pend)}</div>`;
+  return idleBayHtml(hw).replace(/<\/div>\s*$/, () => extra);   // a function: `$&` in a card name stays text
 }
 
 // ── the machine's own panel (settings, models, commands) ────────────────────
@@ -122,7 +123,7 @@ function panel(m, pend) {
       : '<tr><td class="note">No models in its playground yet.</td></tr>'}</tbody></table>
     <form class="mpull row" data-machine="${esc(m.machine)}"><input name="model" placeholder="Download a model, e.g. qwen3:8b" aria-label="Model to download on ${esc(m.machine)}"><button type="submit">Download</button></form>
     ${Object.keys(r.downloadFailures || {}).length ? `<h4>Downloads that failed</h4><ul class="cmds">${Object.entries(r.downloadFailures).map(([model, f]) =>
-      `<li class="failed">${esc(model)}: ${esc(f.error || 'failed')} (${f.count} tr${f.count === 1 ? 'y' : 'ies'}; next try ${esc(whenText(f.until, f.until + 1))})</li>`).join('')}</ul>` : ''}
+      `<li class="failed">${esc(model)}: ${esc(f.error || 'failed')} (${esc(f.count)} tr${f.count === 1 ? 'y' : 'ies'}; next try ${esc(whenText(f.until, f.until + 1))})</li>`).join('')}</ul>` : ''}
     ${cmds.length ? `<h4>Recent requests to this PC</h4><ul class="cmds">${cmds.map((c) => `<li class="${esc(c.state)}">${esc(commandText(c, cardName))}</li>`).join('')}</ul>` : ''}
   </details>`;
 }

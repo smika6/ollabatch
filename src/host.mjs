@@ -46,6 +46,39 @@ const STATIC = /^\/[a-z][a-z-]*\.(mjs|js|css)$/;
 const MIME = { mjs: 'text/javascript', js: 'text/javascript', css: 'text/css' };
 const JOB_ACTIONS = new Set(['move', 'pause', 'resume', 'cancel', 'rerun']);
 
+const bare = (addr) => String(addr ?? '').replace(/^::ffff:/, '');
+function decode(s) {
+  try { return decodeURIComponent(s); } catch { throw new HttpError(400, 'bad %-escape in the address'); }
+}
+
+// What an agent reports, with every field the dashboard shows forced to its
+// type: a report is data from another machine, never markup.
+const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+const str = (v, max = 300) => (v == null ? null : String(v).slice(0, max));
+const bool = (v) => v === true;
+export function cleanReport(b) {
+  const pg = b.playground && typeof b.playground === 'object' ? b.playground : null;
+  const list = (v) => (Array.isArray(v) ? v : []);
+  return {
+    machine: str(b.machine, 200), os: str(b.os, 40), agent: str(b.agent, 40), policy: str(b.policy, 20), watcher: b.watcher !== false,
+    remote: bool(b.remote), trusted: bool(b.trusted), appliedVersion: num(b.appliedVersion),
+    localOverride: list(b.localOverride).map((x) => str(x, 120)).slice(0, 100),
+    schedule: list(b.schedule).slice(0, 14).map((w) => ({ days: list(w?.days).map(num).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6), from: str(w?.from, 5), to: str(w?.to, 5) })),
+    cards: list(b.cards).slice(0, 64).map((c) => ({
+      id: str(c?.id, 64), workerId: str(c?.workerId, 200), name: str(c?.name, 200), vendor: str(c?.vendor, 40),
+      vramMB: num(c?.vramMB), freeMB: num(c?.freeMB), util: num(c?.util), tempC: num(c?.tempC), powerW: num(c?.powerW),
+      display: bool(c?.display), state: str(c?.state, 40), reason: str(c?.reason), slots: num(c?.slots),
+      fixedSlots: c?.fixedSlots === 'auto' || c?.fixedSlots == null ? 'auto' : num(c.fixedSlots), paused: bool(c?.paused), disabled: bool(c?.disabled),
+      loadedModel: str(c?.loadedModel, 200), loadedModels: list(c?.loadedModels).map((x) => str(x, 200)).slice(0, 16), tuning: str(c?.tuning, 40),
+    })),
+    playground: pg && { path: str(pg.path, 500), limitGB: num(pg.limitGB), usedBytes: num(pg.usedBytes) ?? 0, downloads: bool(pg.downloads),
+      models: list(pg.models).slice(0, 500).map((x) => ({ name: str(x?.name, 200), size: num(x?.size) ?? 0, linked: bool(x?.linked), locked: bool(x?.locked) })) },
+    download: b.download && typeof b.download === 'object' ? { model: str(b.download.model, 200), completed: num(b.download.completed) ?? 0, total: num(b.download.total) } : null,
+    downloadFailures: Object.fromEntries(Object.entries(b.downloadFailures && typeof b.downloadFailures === 'object' ? b.downloadFailures : {}).slice(0, 50)
+      .map(([m, f]) => [str(m, 200), { count: num(f?.count) ?? 0, until: num(f?.until), error: str(f?.error) }])),
+  };
+}
+
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
@@ -68,6 +101,7 @@ export async function startHost({
 
   const state = readJson(files.state) || {};
   const store = JobStore.fromJSON(state.jobs, { now, isAlive: pidAlive });
+  for (const j of store.list()) delete j.summaryState;   // a summary waiting when the host stopped isn't running now
   const userLabels = state.cardLabels || {};
   const settings = { summaries: 'manual', summaryModel: null, ...(state.settings || {}) };   // cardKey → { k: v }, set from the dashboard/CLI
   const metrics = Metrics.fromJSON(readJson(files.metrics), { now });
@@ -397,20 +431,26 @@ export async function startHost({
     store.remove(id);
     fs.rmSync(path.join(files.logs, `${id}.log`), { force: true });
     fs.rmSync(timelineFile(id), { force: true });
+    saver.schedule();
   }
 
   // ── summaries ────────────────────────────────────────────────────────────
   // Only cards the pool's owner controls see a job's log: the host's own
   // machine, or machines whose owner let the pool manage them. And only when
   // they have nothing else to do, without swapping out a loaded model.
-  const trustedCard = (w) => w.host === 'local' || w.machine === os.hostname() || reports.get(w.machine)?.remote === true;
+  // Trust rests on where a card connected from, not on what it says: a card
+  // naming the host's machine must connect from this machine, and a report
+  // saying "remote" counts only from the address the card registered from.
+  const own = (addr) => addr === 'local' || /^(::ffff:)?127\./.test(addr) || addr === '::1' || lanAddresses().includes(bare(addr));
+  const trustedCard = (w) => w.host === 'local' || (w.machine === os.hostname() && own(w.host))
+    || (reports.get(w.machine)?.remote === true && bare(reports.get(w.machine).from) === bare(w.host));
   function summaryCard(w) {
     if (!trustedCard(w) || w.paused) return false;
     if (queue.pending.some((r) => r.jobId !== '_summary' && canServe(w, r.jobId))) return false;
     const loaded = reports.get(w.machine)?.cards?.find((c) => c.workerId === w.id)?.loadedModel;
     return !loaded || summaryModels.has(loaded);
   }
-  const summaryModels = new Set();
+  const summaryModels = new Map();   // model → summaries waiting for it
   function pickSummaryModel(job) {
     const cards = queue.activeWorkers().filter(trustedCard);
     if (job.model && cards.some((w) => w.models.includes(job.model))) return job.model;
@@ -424,9 +464,9 @@ export async function startHost({
     if (!model) { job.summaryError = 'no trusted card with a model is online'; return; }
     const { system, user } = buildPrompt(job, logTail(job, 400));
     job.summaryState = 'running';
-    summaryModels.add(model);
+    summaryModels.set(model, (summaryModels.get(model) || 0) + 1);
     try {
-      const r = await queue.enqueue({ jobId: '_summary', path: '/api/chat', leaseMs: 120_000, signal: AbortSignal.timeout(60 * 60_000),
+      const r = await queue.enqueue({ jobId: '_summary', path: '/api/chat', leaseMs: 120_000, maxAttempts: 1, signal: AbortSignal.timeout(60 * 60_000),
         body: JSON.stringify({ model, stream: false, options: { temperature: 0.2 }, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }) });
       const text = r.status >= 200 && r.status < 300 ? JSON.parse(r.body).message?.content?.trim() : null;
       if (text) { job.summary = { text: text.slice(0, 4000), model, at: now(), source: 'pool' }; job.summaryError = null; }
@@ -435,7 +475,7 @@ export async function startHost({
       job.summaryError = e.message;
     } finally {
       job.summaryState = null;
-      summaryModels.delete(model);
+      if (summaryModels.get(model) > 1) summaryModels.set(model, summaryModels.get(model) - 1); else summaryModels.delete(model);
       saver.schedule();
     }
   }
@@ -537,8 +577,8 @@ export async function startHost({
       const b = await readJsonBody(req);
       if (typeof b.machine !== 'string' || !b.machine) throw new HttpError(400, 'machine is required');
       if (b.cards != null && !Array.isArray(b.cards)) throw new HttpError(400, 'cards must be a list');
-      reports.set(b.machine, { ...b, seenAt: now() });
-      for (const c of b.cards || []) {
+      reports.set(b.machine, { ...cleanReport(b), from: req.socket.remoteAddress, seenAt: now() });
+      for (const c of reports.get(b.machine).cards) {
         const w = c.workerId && queue.workers.get(c.workerId);
         insights.sampleCard(c.workerId || `${b.machine}-${c.id}`, { tempC: c.tempC ?? null, vramMB: c.vramMB ?? null,
           vramUsedMB: c.vramMB != null && c.freeMB != null ? c.vramMB - c.freeMB : null, util: c.util ?? null, powerW: c.powerW ?? null,
@@ -589,7 +629,7 @@ export async function startHost({
       return send(res, 200, { ...n, loadsLastHour: Object.fromEntries([...queue.workers.keys()].map((id) => [id, insights.loadsLastHour(id)])) });
     }
     if (req.method === 'GET' && (m = p.match(/^\/ob\/insights\/cards\/([^/]+)$/))) {
-      return send(res, 200, { range: url.searchParams.get('range') || '1h', samples: insights.cardSeries(decodeURIComponent(m[1]), url.searchParams.get('range') || '1h') });
+      return send(res, 200, { range: url.searchParams.get('range') || '1h', samples: insights.cardSeries(decode(m[1]), url.searchParams.get('range') || '1h') });
     }
     if (req.method === 'GET' && p === '/ob/metrics') {
       const by = url.searchParams.get('by') === 'job' ? 'job' : 'card';
@@ -674,7 +714,7 @@ export async function startHost({
       if (req.method === 'POST' && JOB_ACTIONS.has(m[2])) return send(res, 200, await jobAction(job, m[2], await readJsonBody(req)));
     }
     if ((m = p.match(/^\/ob\/machines\/([^/]+)\/(settings|commands)$/))) {
-      const machine = decodeURIComponent(m[1]);
+      const machine = decode(m[1]);
       if (req.method === 'GET' && m[2] === 'settings') return send(res, 200, remote.desired(machine));
       if (req.method === 'GET' && m[2] === 'commands') return send(res, 200, remote.commands(machine));
       const managed = () => {
@@ -685,7 +725,7 @@ export async function startHost({
         managed();
         const b = await readJsonBody(req);
         let d;
-        try { d = remote.setDesired(machine, b); } catch (e) { throw new HttpError(400, e.message); }
+        try { d = remote.setDesired(machine, b, { cards: (reports.get(machine).cards || []).map((c) => c.id) }); } catch (e) { throw new HttpError(400, e.message); }
         saver.schedule();
         log(`~ ${machine}: settings ${Object.keys(b).join(', ')}`);
         return send(res, 200, d);

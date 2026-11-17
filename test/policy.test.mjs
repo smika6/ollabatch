@@ -67,3 +67,18 @@ test('schedule windows, including one that crosses midnight', () => {
   const mon2am = new Date(2026, 10, 16, 2, 0).getTime();
   assert.equal(at(mon2am).ev([], { policy: 'schedule', schedule: monOnly }).a.lend, false);
 });
+
+test('a policy the pool set still steps aside for a fullscreen program', () => {
+  const { ev, step } = at(0);
+  ev(['a'], { policy: 'always', stepAside: true });
+  step(10 * S);
+  assert.deepEqual(ev(['a'], { policy: 'always', stepAside: true }).a, { lend: false, reason: 'paused-in-use' });
+  assert.equal(ev(['a'], { policy: 'always' }).a.lend, true, 'the owner\'s own "always" means always');
+});
+
+test('a malformed schedule never matches and never throws', () => {
+  const { ev } = at(new Date(2026, 10, 16, 12, 0).getTime());
+  for (const schedule of [[{}], [null], [{ days: [1], from: 'x', to: '13:00' }], 'nope']) {
+    assert.equal(ev([], { policy: 'schedule', schedule }).a.reason, 'outside-schedule');
+  }
+});

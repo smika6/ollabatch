@@ -24,7 +24,13 @@ function renderSummary(s) {
   $('summary').textContent = `${online} card${online === 1 ? '' : 's'} working, ${left}${unknown}.`;
   const machines = s.machines.filter((m) => m.cards.some((c) => c.active)).length;
   const tps = I.now?.outputTokPerSec;
-  const inMemory = new Set(Object.values(I.now?.loadedModels || {}).filter(Boolean)).size;
+  // Agents report what each card has in memory; a card joined without an agent
+  // only tells us the model of its last answer, so it counts while it's online.
+  const agentCards = new Set(s.machines.flatMap((m) => (m.report?.cards || []).map((c) => c.workerId).filter(Boolean)));
+  const inMemory = new Set([
+    ...s.machines.flatMap((m) => (m.report?.cards || []).flatMap((c) => c.loadedModels || [])),
+    ...s.workers.filter((w) => w.active && !agentCards.has(w.id)).map((w) => I.now?.loadedModels?.[w.id]).filter(Boolean),
+  ]).size;
   $('stats').innerHTML = [
     [rate(s.perSec * 60), 'items per minute'],
     [tps == null ? '…' : rate(tps), 'output tokens per second'],

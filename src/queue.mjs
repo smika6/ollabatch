@@ -31,9 +31,10 @@ export class RequestQueue {
   // `signal`: the client went away (timed out, retried, exited) — drop the
   // request instead of running it on a GPU for nobody.
   // leaseMs: a shorter lease for this request (summaries give a card 2 minutes).
-  enqueue({ jobId = '_', path, body, signal, leaseMs }) {
+  // maxAttempts: fewer tries for this request (a summary that timed out has failed).
+  enqueue({ jobId = '_', path, body, signal, leaseMs, maxAttempts }) {
     return new Promise((resolve) => {
-      const r = { id: String(this.nextId++), jobId, path, body, attempts: 0, triedBy: new Set(), resolve, enqueuedAt: this.now(), leaseMs };
+      const r = { id: String(this.nextId++), jobId, path, body, attempts: 0, triedBy: new Set(), resolve, enqueuedAt: this.now(), leaseMs, maxAttempts };
       if (signal) {
         if (signal.aborted) return resolve({ status: 499, body: JSON.stringify({ error: 'client gone' }) });
         signal.addEventListener('abort', () => this.#abort(r), { once: true });
@@ -121,7 +122,7 @@ export class RequestQueue {
       return true;
     }
     if (w) { w.failed++; w.lastError = String(result?.error || `HTTP ${result?.status}`).slice(0, 200); }
-    if (r.attempts >= this.maxAttempts) {
+    if (r.attempts >= (r.maxAttempts ?? this.maxAttempts)) {
       r.resolve({ status: 502, body: JSON.stringify({ error: `ollabatch: gave up after ${r.attempts} attempts — last: ${w?.lastError || 'unknown'}` }) });
     } else {
       this.#requeue(r, w?.lastError);
@@ -149,7 +150,7 @@ export class RequestQueue {
   expireLeases() {
     for (const r of [...this.leased.values()]) {
       if (r.leasedAt >= this.now() - (r.leaseMs ?? this.leaseMs)) continue;
-      if (r.attempts >= this.maxAttempts) {
+      if (r.attempts >= (r.maxAttempts ?? this.maxAttempts)) {
         this.leased.delete(r.id);
         r.resolve({ status: 502, body: JSON.stringify({ error: `ollabatch: gave up after ${r.attempts} attempts — last: lease expired` }) });
       } else {

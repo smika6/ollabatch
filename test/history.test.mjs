@@ -105,3 +105,11 @@ test('history search also finds models used, summaries and notes', () => {
   assert.deepEqual(filterHistory(jobs, { q: 'timed out' }).jobs.map((j) => j.id), ['b']);
   assert.deepEqual(filterHistory(jobs, { q: 'driver' }).jobs.map((j) => j.id), ['c']);
 });
+
+test('CSV quotes carriage returns and defuses spreadsheet formulas', () => {
+  const csv = toCsv([{ id: 'a', name: '=HYPERLINK("x")', status: 'done', template: '@t', exitCode: -1, progress: {}, stats: {} }, { id: 'b', name: 'two\rlines', status: 'done' }]);
+  assert.match(csv, /"'=HYPERLINK\(""x""\)"/);
+  assert.match(csv, /,'@t,/);
+  assert.match(csv, /,-1,/, 'numbers stay numbers');
+  assert.match(csv, /"two\rlines"/);
+});

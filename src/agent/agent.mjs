@@ -16,6 +16,7 @@ import { readJson, writeJsonAtomic } from '../state.mjs';
 import { startCardWorker } from '../card-worker.mjs';
 import { listenBeacons, BEACON_PORT } from '../discovery.mjs';
 import { recordServers, reapRecorded } from './reap.mjs';
+import { validSchedule } from '../remote.mjs';
 
 const GB = 1024 ** 3, MB = 1024 ** 2;
 const STALL_MS = 120_000;                 // a download with no progress this long is abandoned
@@ -65,7 +66,7 @@ export async function startAgent({
     policy: { get: () => cfg.policy, norm: (v) => v,
       set: (v) => { if (!POLICIES.includes(v)) throw new Error('policy is when-free, always, schedule or never'); cfg.policy = v; } },
     schedule: { get: () => cfg.schedule, norm: (v) => v,
-      set: (v) => { if (!Array.isArray(v)) throw new Error('schedule must be a list'); cfg.schedule = v; } },
+      set: (v) => { if (!validSchedule(v)) throw new Error('a schedule is a list of { days: [0-6], from: "HH:MM", to: "HH:MM" }'); cfg.schedule = v; } },
     'playground.limitGB': { get: () => cfg.playground.limitGB, norm: (v) => Math.max(1, Number(v)),
       set: (v) => { if (!Number.isFinite(Number(v))) throw new Error('the playground limit must be a number of GB'); cfg.playground.limitGB = Math.max(1, Number(v)); } },
     'playground.downloads': { get: () => cfg.playground.downloads, norm: (v) => !!v, set: (v) => { cfg.playground.downloads = !!v; } },
@@ -77,13 +78,20 @@ export async function startAgent({
     const m = /^cards\.([\w-]+)\.(paused|disabled|slots)$/.exec(name);
     if (!m) return null;
     const [, id, k] = m;
+    if (!cards.has(id)) return null;
     if (k === 'slots') {
       return { get: () => cardCfg(id).slots ?? 'auto', norm: (v) => { try { return slotsOf(v); } catch { return v; } },
         set: (v) => { const n = slotsOf(v); if (n === 'auto') delete cardCfg(id).slots; else cardCfg(id).slots = n; } };
     }
     return { get: () => !!cardCfg(id)[k], norm: (v) => !!v, set: (v) => { cardCfg(id)[k] = !!v; } };
   }
-  const setLocal = (name, value) => { field(name).set(value); cfg.changedAt[name] = now(); };
+  const setLocal = (name, value) => {
+    const fl = field(name);
+    if (!fl) throw new Error(`no ${name} on this machine`);
+    fl.set(value);
+    cfg.changedAt[name] = now();
+    if (name === 'policy') cfg.policyBy = 'owner';
+  };
   const headers = () => ({ 'Content-Type': 'application/json', 'x-pool-token': cfg.password || '' });
   const workerId = (id) => `${machine}-${id}`;
 
@@ -123,7 +131,9 @@ export async function startAgent({
   async function apply() {
     const ids = [...cards.keys()];
     const ownerPaused = new Set(ids.filter((id) => cardCfg(id).paused));
-    const decisions = policy.evaluate({ policy: cfg.policy, schedule: cfg.schedule, inUse, ownerPaused, cards: ids });
+    // A policy the pool set never lends a card while a fullscreen program uses
+    // it: managing a PC from the dashboard can't take a game's GPU.
+    const decisions = policy.evaluate({ policy: cfg.policy, schedule: cfg.schedule, inUse, ownerPaused, cards: ids, stepAside: cfg.policyBy === 'pool' });
     for (const [id, c] of cards) {
       const d = decisions[id];
       if (c.card.integrated) { Object.assign(c, { state: 'disabled', reason: 'integrated GPU (not lent by default)' }); continue; }
@@ -229,34 +239,41 @@ export async function startAgent({
         }
         if (!pg.downloads) continue;
         if (failures[model] && now() < failures[model].until) continue;   // backing off after a failed try
-        const size = await remoteSize(model, { fetch: fetchRegistry });
-        if (size == null || size + GB > c.card.vramMB * MB) continue;
-        if (!cfg.playground.downloads) continue;   // the owner may have changed their mind meanwhile
-        const all = listModels(pg.path);
-        const plan = planEviction({ models: usage(pg.path, all).models, needBytes: size, limitBytes: pg.limitGB * GB,
-          usedBytes: usage(pg.path, all).usedBytes, locked: new Set(pg.locked), inUse: wanted, lastUsed: pg.lastUsed });
-        if (!plan) continue;
-        if (!diskHas(size + 2 * GB)) { log(`! not enough free disk for ${model}`); continue; }
-        for (const name of plan) {
-          if (cfg.playground.locked.includes(name) || wanted.has(name)) continue;
-          await del(c, name);
-        }
-        // In the background: a long download must not stop the agent's checks
-        // (a game starting, the owner pausing) or its reports.
-        download = { model, completed: 0, total: size };
-        pull(c, model).then(refreshAll).catch(() => {});
+        try { await startPull(model, { card: c, keep: wanted }); } catch (e) { if (/disk/.test(e.message)) log(`! ${e.message}`); continue; }
         return;   // one download at a time
       }
     }
   }
 
-  async function startPull(model) {
+  // Every download, whoever asks (the pool's wants, a dashboard command, the
+  // owner on the local page), keeps to the owner's limits: downloads allowed
+  // (the owner's own request is that permission), the model fits a card, and
+  // the playground limit and free disk hold after evicting unlocked models.
+  async function startPull(model, { card = null, keep = new Set(), byOwner = false } = {}) {
     if (!model) throw new Error('which model?');
     if (download) throw new Error(`already downloading ${download.model}`);
-    const c = [...cards.values()].find((x) => x.server?.state === 'ready');
-    if (!c) throw new Error('no card server is running yet');
-    cfg.playground.lastUsed[model] = now();   // so the next eviction doesn't take it straight back out
-    download = { model, completed: 0, total: null };
+    const pg = cfg.playground;
+    if (!byOwner && !pg.downloads) throw new Error("downloads aren't allowed on this PC; its owner can allow them on its page");
+    const ready = card ? [card] : [...cards.values()].filter((x) => x.server?.state === 'ready').sort((a, b) => b.card.vramMB - a.card.vramMB);
+    if (!ready.length) throw new Error('no card server is running yet');
+    const size = await remoteSize(model, { fetch: fetchRegistry });
+    if (size == null) throw new Error(`couldn't find ${model} in the Ollama registry`);
+    if (!byOwner && !pg.downloads) throw new Error("downloads aren't allowed on this PC; its owner can allow them on its page");   // they may have changed their mind meanwhile
+    const c = ready.find((x) => size + GB <= x.card.vramMB * MB);
+    if (!c) throw new Error(`${model} (${(size / GB).toFixed(1)} GB) is too big for ${card ? card.card.name : 'any card here'}`);
+    if (download) throw new Error(`already downloading ${download.model}`);
+    const inUse = new Set([...keep, ...[...cards.values()].flatMap((x) => x.loaded || [])]);
+    const all = listModels(pg.path);
+    const u = usage(pg.path, all);
+    const plan = planEviction({ models: u.models, needBytes: size, limitBytes: pg.limitGB * GB, usedBytes: u.usedBytes,
+      locked: new Set(pg.locked), inUse, lastUsed: pg.lastUsed });
+    if (!plan) throw new Error(`${model} (${(size / GB).toFixed(1)} GB) doesn't fit in this PC's ${pg.limitGB} GB model space, even after removing unlocked models`);
+    if (!diskHas(size + 2 * GB)) throw new Error(`not enough free disk for ${model}`);
+    for (const name of plan) if (!pg.locked.includes(name) && !inUse.has(name)) await del(c, name);
+    pg.lastUsed[model] = now();   // so the next eviction doesn't take it straight back out
+    // In the background: a long download must not stop the agent's checks
+    // (a game starting, the owner pausing) or its reports.
+    download = { model, completed: 0, total: size };
     pull(c, model).then(refreshAll).catch(() => {});
   }
 
@@ -315,7 +332,7 @@ export async function startAgent({
             cfg.remoteSeen[name] = f.at;
             dirty = true;
             if ((cfg.changedAt[name] ?? 0) >= f.at - skew) continue;   // the owner changed it here since
-            try { fl.set(f.value); cfg.changedAt[name] = f.at - skew; log(`the pool set ${name}`); }
+            try { fl.set(f.value); cfg.changedAt[name] = f.at - skew; if (name === 'policy') cfg.policyBy = 'pool'; log(`the pool set ${name}`); }
             catch (e) { log(`! the pool's ${name} was refused: ${e.message}`); }
           }
           if (cfg.remoteVersion !== d.version) { cfg.remoteVersion = d.version; dirty = true; }
@@ -500,11 +517,15 @@ export async function startAgent({
         case 'remote': cfg.remote = !!a.on; if (!cfg.remote) localOverride = []; break;
         case 'restart': await runCommand({ type: 'restart-card', card: a.card }); break;
         case 'retune': await runCommand({ type: 'retune', card: a.card }); break;
-        case 'pull': await startPull(String(a.model || '').trim()); break;
+        case 'pull': await startPull(String(a.model || '').trim(), { byOwner: true }); break;
         case 'join': {
           if (!/^http:\/\/[A-Za-z0-9.\-]+:\d+\/?$/.test(a.url || '')) throw new Error('the host URL should look like http://192.168.1.20:11500');
           for (const c of cards.values()) { await c.worker?.leave(); c.worker = null; }
-          cfg.host = a.url.replace(/\/+$/, '');
+          const url = a.url.replace(/\/+$/, '');
+          // Letting one pool manage this PC isn't letting the next one: switching
+          // pools turns it off until the owner says so again.
+          if (cfg.host && cfg.host !== url) Object.assign(cfg, { remote: false, remoteSeen: {}, remoteVersion: 0, policyBy: 'owner' });
+          cfg.host = url;
           cfg.password = String(a.password || '');
           break;
         }

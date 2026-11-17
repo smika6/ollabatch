@@ -111,9 +111,14 @@ export class Insights {
   }
 
   now() {
-    const since = this.clock() - MIN;
-    const recent = this.minutes.filter((b) => b.t >= Math.floor(since / MIN) * MIN);
-    const out = recent.reduce((s, b) => s + Object.entries(b.rows).filter(([k]) => k.startsWith('card:')).reduce((x, [, a]) => x + a.outputTokens, 0), 0);
+    const t = this.clock(), cur = Math.floor(t / MIN) * MIN, part = (t - cur) / MIN;
+    const tokens = (start) => {
+      const b = this.minutes.find((x) => x.t === start);
+      return b ? Object.entries(b.rows).filter(([k]) => k.startsWith('card:')).reduce((x, [, a]) => x + a.outputTokens, 0) : 0;
+    };
+    // The last 60 seconds: this minute so far, plus the matching share of the
+    // minute before (adding all of it would count up to two minutes over one).
+    const out = tokens(cur) + tokens(cur - MIN) * (1 - part);
     return { outputTokPerSec: +(out / 60).toFixed(2), loadedModels: { ...this.lastModel } };
   }
 

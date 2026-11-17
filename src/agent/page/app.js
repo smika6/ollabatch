@@ -65,7 +65,7 @@ function renderPool() {
 function renderModels() {
   const pg = S.playground;
   $('pgSummary').textContent = `${gb(pg.usedBytes)} of ${pg.limitGB} GB used in ${pg.path}. Models this PC already had are linked in and take no extra space.`
-    + (S.download ? ` Downloading ${S.download.model}: ${Math.round((100 * S.download.completed) / (S.download.total || 1))}%.` : '');
+    + (S.download ? ` Downloading ${S.download.model}${S.download.total ? `: ${Math.round((100 * S.download.completed) / S.download.total)}%` : ''}.` : '');
   $('models').innerHTML = pg.models.length ? pg.models.map((m) => `<tr><td>${esc(m.name)}</td><td class="n">${m.linked ? 'linked' : `${gb(m.size)} GB`}</td>
     <td class="n">${m.locked ? `<button data-a="unlock" data-model="${esc(m.name)}">Unlock</button>` : `<button data-a="lock" data-model="${esc(m.name)}">Lock</button>`}
     ${m.locked ? '' : `<button data-a="remove" data-model="${esc(m.name)}">Remove</button>`}</td></tr>`).join('')

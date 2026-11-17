@@ -74,3 +74,11 @@ test('the host records answers that pass through the pool', async () => {
   assert.equal(s.rows.w.at(-1).outputTokens, 20);
   assert.equal((await call('GET', '/ob/insights/now')).status, 200);
 });
+
+test('"output tokens per second now" covers the last 60 s, not up to two minutes', () => {
+  let t = 70 * HOUR;
+  const ins = new Insights({ now: () => t });
+  for (let s = 0; s < 120; s++) { ins.record({ card: 'a', job: 'j', model: 'm', ok: true, retried: false, waitSec: 0, latencySec: 1, stats: stats({ outputTokens: 10 }) }); t += 1000; }
+  t -= 1000;   // at :59 of the second minute, after a steady 10 tok/s
+  assert.ok(Math.abs(ins.now().outputTokPerSec - 10) < 0.5, `got ${ins.now().outputTokPerSec}`);
+});

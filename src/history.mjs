@@ -59,8 +59,9 @@ export function filterHistory(jobs, { q, status, template, from, to, limit = 50,
 
 const CSV_COLUMNS = ['id', 'name', 'status', 'template', 'model', 'started', 'finished', 'durationSec', 'exitCode', 'done', 'total', 'requests', 'failed', 'outputTokens'];
 const cell = (v) => {
-  const s = v == null ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  let s = v == null ? '' : String(v);
+  if (/^[=+\-@\t\r]/.test(s) && typeof v !== 'number') s = `'${s}`;   // a spreadsheet would run it as a formula
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 const iso = (t) => (t ? new Date(t).toISOString() : '');
 

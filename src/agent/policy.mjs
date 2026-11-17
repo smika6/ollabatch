@@ -9,14 +9,17 @@
 
 const ENTER_MS = 10_000;
 const LEAVE_MS = 3 * 60_000;
-const minutes = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+const minutes = (hhmm) => { const [h, m] = String(hhmm ?? '').split(':').map(Number); return h * 60 + m; };
 
 export function inSchedule(schedule, t) {
   const d = new Date(t);
   const now = d.getHours() * 60 + d.getMinutes();
   const today = d.getDay(), yesterday = (today + 6) % 7;
-  return schedule.some(({ days, from, to }) => {
+  // A malformed window (from an older config, say) simply never matches.
+  return (Array.isArray(schedule) ? schedule : []).some((w) => {
+    const { days, from, to } = w || {};
     const a = minutes(from), b = minutes(to);
+    if (!Array.isArray(days) || !Number.isFinite(a) || !Number.isFinite(b)) return false;
     if (a < b) return days.includes(today) && now >= a && now < b;
     return (days.includes(today) && now >= a) || (days.includes(yesterday) && now < b);
   });
@@ -28,7 +31,9 @@ export class LendPolicy {
     this.seen = {};   // cardId → { since, last }
   }
 
-  evaluate({ policy, schedule = [], inUse, ownerPaused, cards }) {
+  // stepAside: a fullscreen program pauses a card under any policy (used when
+  // the pool, not the owner, set the policy).
+  evaluate({ policy, schedule = [], inUse, ownerPaused, cards, stepAside = false }) {
     const now = this.now();
     const out = {};
     for (const id of cards) {
@@ -41,7 +46,7 @@ export class LendPolicy {
       if (policy === 'never') reason = 'never';
       else if (ownerPaused.has(id)) reason = 'paused-by-owner';
       else if (policy === 'schedule' && !inSchedule(schedule, now)) reason = 'outside-schedule';
-      else if (policy === 'when-free' && s.paused) reason = 'paused-in-use';
+      else if ((policy === 'when-free' || stepAside) && s.paused) reason = 'paused-in-use';
       out[id] = { lend: reason == null, reason };
     }
     return out;

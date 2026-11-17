@@ -56,7 +56,8 @@ function facts(j) {
   const rows = [
     ['Cards', shares.length ? shares.map((c) => `<span class="share"><i style="background:${colorOf(`card:${c.id}`)};width:${Math.max(4, c.pct)}px"></i>${esc(c.label)} ${c.pct}%</span>`).join(' ') : '<span class="note">no requests yet</span>', true],
     ['Requests', `${big(s.requests ?? 0)} answered${s.failed ? `, ${s.failed} failed attempts` : ''}${s.retried ? `, ${s.retried} retried` : ''}`],
-    ['Tokens', s.requests ? `${big(s.promptTokens)} in · ${big(s.outputTokens)} out${tps ? ` · ${rate(tps)} tok/s average output speed` : ''}` : 'none yet'],
+    ['Tokens', !s.requests ? 'none yet' : !s.promptTokens && !s.outputTokens ? 'unknown (the answers carried no stats)'
+      : `${big(s.promptTokens)} in · ${big(s.outputTokens)} out${tps ? ` · ${rate(tps)} tok/s average output speed` : ''}`],
     ['Model loads', s.loads ? `${s.loads} load${s.loads === 1 ? '' : 's'}, ${Math.round(s.loadSec)} s in total` : 'none'],
     ...(s.lastErrors?.length ? [['Last errors', s.lastErrors.map((e) => `<div class="err">${esc(e)}</div>`).join(''), true]] : []),
   ];
