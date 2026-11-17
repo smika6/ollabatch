@@ -5,11 +5,11 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { detectCards, cardLabels, execRun } from './probes.mjs';
+import { detectCards, cardLabels, execRun, backendFromLog } from './probes.mjs';
 import { CardServer, pickPorts, isPortFree } from './server.mjs';
 import { SlotTuner } from './tuner.mjs';
 import { LendPolicy } from './policy.mjs';
-import { startWatcher, learnLuids, ownPids, cardsInUse, rememberLuids } from './inuse.mjs';
+import { startWatcher, learnLuids, ownPids, cardsInUse, rememberLuids, adapterStats } from './inuse.mjs';
 import { listModels, linkModel, removeModel, usage, planEviction, remoteSize, cleanPartial } from './playground.mjs';
 import { loadConfig, saveConfig } from './config.mjs';
 import { readJson, writeJsonAtomic } from '../state.mjs';
@@ -46,6 +46,7 @@ export async function startAgent({
   const cards = new Map();   // cardId → { card, server, worker, tuner, state, reason, version }
   let inUse = new Set();
   let luids = {};   // cardId → adapter LUID, remembered across samples
+  let adapters = { at: 0, stats: {} };   // the latest per-adapter use and memory (Windows)
   let download = null;
   const failures = {};   // model → { count, until }: downloads back off after failing
   let closed = false;
@@ -101,6 +102,7 @@ export async function startAgent({
     onSample: (sample) => {
       const pids = Object.fromEntries([...cards].filter(([, c]) => c.server?.child?.pid).map(([id, c]) => [id, c.server.child.pid]));
       luids = rememberLuids(luids, learnLuids(sample, pids));
+      adapters = { at: Date.now(), stats: adapterStats(sample) };
       inUse = cardsInUse(sample, { luids, ownPids: ownPids(sample, pids), cards: [...cards.values()].map((c) => c.card) });
     },
   });
@@ -150,6 +152,13 @@ export async function startAgent({
         continue;
       }
       Object.assign(c, { state: 'lending', reason: null });
+      // Lending, but the host isn't answering: say so (its models are freed
+      // after the idle time) instead of looking busy.
+      const down = c.worker?.stats().hostDownSince;
+      if (down && Date.now() - down > 20_000) {
+        const at = new Date(down);
+        Object.assign(c, { state: 'waiting-for-host', reason: `the pool's host (${cfg.host}) hasn't answered since ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}; GPU memory is freed after 5 idle minutes, and it carries on when the host is back` });
+      }
       if (!c.worker) {
         try {
           c.worker = await startCardWorker({ hostUrl: cfg.host, password: cfg.password || '', ollama: c.server.url, slots: c.server.slots,
@@ -163,7 +172,7 @@ export async function startAgent({
       }
       c.pausedFor = null;
     }
-    for (const c of cards.values()) if (c.state !== 'lending' && c.worker) c.pausedFor = c.state;
+    for (const c of cards.values()) if (c.state !== 'lending' && c.state !== 'waiting-for-host' && c.worker) c.pausedFor = c.state;
   }
 
   // Restart a card's server (a slot change, or by request) without leasing
@@ -439,7 +448,7 @@ export async function startAgent({
         id: c.card.id, workerId: c.worker ? workerId(c.card.id) : null, name: c.card.name, vendor: c.card.vendor,
         vramMB: c.card.vramMB, freeMB: c.card.freeMB, util: c.card.util, tempC: c.card.tempC, powerW: c.card.powerW,
         display: c.card.display, state: c.state, reason: c.reason, slots: c.server?.slots ?? null,
-        fixedSlots: cardCfg(c.card.id).slots ?? 'auto', paused: !!cardCfg(c.card.id).paused, disabled: !!cardCfg(c.card.id).disabled, loadedModel: c.loaded?.[0] ?? null, loadedModels: c.loaded ?? [],
+        backend: c.backend ?? null, fixedSlots: cardCfg(c.card.id).slots ?? 'auto', paused: !!cardCfg(c.card.id).paused, disabled: !!cardCfg(c.card.id).disabled, loadedModel: c.loaded?.[0] ?? null, loadedModels: c.loaded ?? [],
         tuning: c.tuner ? (c.tuner.phase === 'measuring' ? `trying ${c.tuner.slots}` : 'tuned') : null,
       })),
       playground: { path: pg.path, limitGB: pg.limitGB, usedBytes: u.usedBytes, downloads: pg.downloads,
@@ -466,6 +475,14 @@ export async function startAgent({
       if ([...cards.values()].some((c) => c.card.source === 'nvidia-smi')) {
         found = found.filter((c) => c.vendor !== 'nvidia' || c.source === 'nvidia-smi');
       }
+      // Cards nvidia-smi doesn't cover (Intel Arc, AMD on Windows): use and
+      // memory from Windows' own per-adapter counters, once we know the adapter.
+      if (Date.now() - adapters.at < 20_000) {
+        found = found.map((card) => {
+          const st = card.source === 'windows' && luids[card.id] ? adapters.stats[luids[card.id]] ?? { util: 0, usedBytes: null } : null;
+          return st ? { ...card, util: st.util, freeMB: st.usedBytes == null ? null : Math.max(0, card.vramMB - Math.round(st.usedBytes / MB)) } : card;
+        });
+      }
       found.forEach((card, index) => {
         const c = cards.get(card.id);
         if (c) c.card = card; else cards.set(card.id, { card, index, server: null, worker: null, tuner: null, state: 'starting', reason: null });
@@ -476,6 +493,7 @@ export async function startAgent({
       await tune();
       await models();
       await loaded();
+      for (const c of cards.values()) if (c.server) c.backend = backendFromLog(logTail(path.join(logDir, `ollama-${c.card.id}.log`))) ?? c.backend ?? null;
       await sendReport();
     } catch (e) {
       log(`! agent tick: ${e.message}`);
@@ -548,6 +566,19 @@ export async function startAgent({
     },
   };
   return api;
+}
+
+// The end of a log file (a card server's log can grow large).
+function logTail(file, bytes = 256 * 1024) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const buf = Buffer.alloc(Math.min(bytes, size));
+      fs.readSync(fd, buf, 0, buf.length, size - buf.length);
+      return buf.toString('utf8');
+    } finally { fs.closeSync(fd); }
+  } catch { return ''; }
 }
 
 const REASONS = {

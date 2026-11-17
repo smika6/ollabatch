@@ -7,7 +7,7 @@ const arc = { id: 'intel-963936', workerId: null, name: 'Intel(R) Arc(TM) A770 G
   state: 'paused-in-use', reason: 'a fullscreen program is using this GPU' };
 
 test('hardware line: VRAM, free, temperature, power, slots', () => {
-  assert.deepEqual(hardwareMeta(rtx), ['16 GB', '4.2 GB free', '66°C', '248 W', '2 at once, tuned']);
+  assert.deepEqual(hardwareMeta(rtx), ['16 GB', '4.2 GB free', '66°C', 'use unknown', '248 W', '2 at once, tuned']);
 });
 
 test('values a driver does not report read "unknown", never 0', () => {

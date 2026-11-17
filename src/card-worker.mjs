@@ -10,12 +10,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function startCardWorker({
   hostUrl, password = '', ollama, slots = 2, id, label, labels = {},
   machine = os.hostname(), hardware = null, log = () => {}, releaseNetworkErrors = false,
+  // A card with no work this long drops its models, so a job's long keep_alive
+  // (or a host that went away) never holds the GPU's memory: the model runner
+  // exits. The next request loads it again.
+  idleUnloadMs = 5 * 60_000,
+  // A request for work that hangs (host asleep, Wi-Fi gone) gives up after this.
+  workTimeoutMs = 60_000,
 }) {
   if (!/^https?:\/\//.test(hostUrl || '')) throw new Error('needs the host URL, e.g. http://192.168.1.20:11500');
   const s = {
     host: hostUrl.replace(/\/+$/, ''), password, ollama: ollama.replace(/\/+$/, ''), slots,
     models: await ollamaModels(ollama.replace(/\/+$/, '')), paused: false, hostPaused: false, stopped: false,
     done: 0, failed: 0, oomErrors: 0, recentMs: [],
+    lastWorkAt: Date.now(), hostDownSince: null,   // since when the host hasn't answered
   };
   const loops = new Set();   // { stop, ac, reqId }
   const unloader = makeUnloader(s.ollama, log);
@@ -35,7 +42,14 @@ export async function startCardWorker({
   };
 
   async function take() {
-    const r = await fetch(`${s.host}/pool/work?worker=${encodeURIComponent(id)}`, { headers: headers() });
+    let r;
+    try {
+      r = await fetch(`${s.host}/pool/work?worker=${encodeURIComponent(id)}`, { headers: headers(), signal: AbortSignal.timeout(workTimeoutMs) });
+    } catch (e) {
+      if (!s.hostDownSince) { s.hostDownSince = Date.now(); log(`card ${label || id}: can't reach ${s.host} (${e.cause?.code || e.message}); retrying`); }
+      throw e;
+    }
+    if (s.hostDownSince) { log(`card ${label || id}: ${s.host} is back`); s.hostDownSince = null; }
     if (r.status === 204) { s.hostPaused = r.headers.get('x-pool-paused') === '1'; return null; }
     s.hostPaused = false;
     if (r.status === 409) { await register(); return null; }   // the host restarted
@@ -54,6 +68,7 @@ export async function startCardWorker({
       }
       if (s.paused || loop.stop || s.stopped) { await release([req.id], 'paused'); continue; }
       unloader.reset();
+      s.lastWorkAt = Date.now();
       loop.ac = new AbortController();
       loop.reqId = req.id;
       const t0 = Date.now();
@@ -66,6 +81,7 @@ export async function startCardWorker({
         if (!loop.ac.signal.aborted) result = { status: 0, error: e.cause?.code || e.message };
       }
       loop.ac = null; loop.reqId = null;
+      s.lastWorkAt = Date.now();
       if (!result) continue;   // aborted by a pause: already released
       // This card's own server is down (crashed, restarting): that's not the
       // request's fault, so hand it back without spending an attempt, and wait.
@@ -100,6 +116,10 @@ export async function startCardWorker({
   const beat = setInterval(async () => {
     try { s.models = await ollamaModels(s.ollama); await register(); } catch { /* next beat */ }
   }, 30_000);
+  const idle = setInterval(() => {
+    if (s.stopped || [...loops].some((l) => l.ac) || Date.now() - s.lastWorkAt < idleUnloadMs) return;
+    unloader.unload(s.hostDownSince ? "the pool's host is unreachable" : `idle ${Math.round(idleUnloadMs / 60_000)} min`);
+  }, Math.max(250, Math.min(15_000, idleUnloadMs / 4)));
   log(`card ${label || id} joined ${s.host} - ${s.slots} slot(s)`);
 
   return {
@@ -129,9 +149,11 @@ export async function startCardWorker({
     models: () => [...s.models],
     setOllama(url) { s.ollama = url.replace(/\/+$/, ''); },
     setHost(url, pw = s.password) { s.host = url.replace(/\/+$/, ''); s.password = pw; },
-    stats: () => ({ done: s.done, failed: s.failed, inflight: [...loops].filter((l) => l.ac).length, recentMs: [...s.recentMs], oomErrors: s.oomErrors }),
+    stats: () => ({ done: s.done, failed: s.failed, inflight: [...loops].filter((l) => l.ac).length, recentMs: [...s.recentMs], oomErrors: s.oomErrors,
+      hostDownSince: s.hostDownSince, lastWorkAt: s.lastWorkAt }),
     async leave() {
       clearInterval(beat);
+      clearInterval(idle);
       s.stopped = true;
       for (const l of loops) l.ac?.abort();
       try { await fetch(`${s.host}/pool/leave`, { method: 'POST', headers: headers(), body: JSON.stringify({ id }) }); } catch { /* host gone */ }

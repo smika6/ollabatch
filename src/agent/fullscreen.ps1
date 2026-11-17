@@ -61,8 +61,12 @@ while ($true) {
       @{ pid = [int]$Matches[1]; luid = $Matches[2]; engtype = $Matches[3]; util = [math]::Round($s.CookedValue, 1) }
     }
   })
+  # Each adapter's dedicated memory in use (bytes), for cards nvidia-smi doesn't cover.
+  $mem = @(foreach ($s in (Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage').CounterSamples) {
+    if ($s.InstanceName -match '^luid_(0x[0-9a-f]+_0x[0-9a-f]+)_phys') { @{ luid = $Matches[1]; bytes = [int64]$s.CookedValue } }
+  })
   $procs = @(Get-CimInstance Win32_Process -Filter "Name like 'ollama%' or Name like 'llama-server%'" | ForEach-Object { @{ pid = [int]$_.ProcessId; ppid = [int]$_.ParentProcessId; name = $_.Name } })
-  [Console]::Out.WriteLine((ConvertTo-Json -Compress -Depth 4 -InputObject @{ fg = $fg; engines = $engines; procs = $procs }))
+  [Console]::Out.WriteLine((ConvertTo-Json -Compress -Depth 4 -InputObject @{ fg = $fg; engines = $engines; mem = $mem; procs = $procs }))
   [Console]::Out.Flush()
   Start-Sleep -Seconds 5
 }

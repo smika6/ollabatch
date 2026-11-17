@@ -57,6 +57,26 @@ export function rememberLuids(remembered, learned) {
   return { ...remembered, ...learned };
 }
 
+// Per adapter, from one sample: use % the way Task Manager shows it (the
+// busiest engine type, summed over processes) and dedicated memory in use.
+export function adapterStats(sample) {
+  const out = {};
+  const byType = {};
+  for (const e of sample?.engines || []) {
+    const k = `${e.luid}|${e.engtype}`;
+    byType[k] = (byType[k] || 0) + (Number(e.util) || 0);
+  }
+  for (const [k, v] of Object.entries(byType)) {
+    const luid = k.split('|')[0];
+    (out[luid] ??= { util: 0, usedBytes: null }).util = Math.min(100, Math.max(out[luid].util, Math.round(v)));
+  }
+  for (const m of sample?.mem || []) {
+    const o = (out[m.luid] ??= { util: 0, usedBytes: null });
+    o.usedBytes = (o.usedBytes || 0) + (Number(m.bytes) || 0);
+  }
+  return out;
+}
+
 export function cardsInUse(sample, { luids, ownPids: own, cards }) {
   const f = sample.fg;
   const used = new Set();

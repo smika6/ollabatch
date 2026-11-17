@@ -55,12 +55,25 @@ export function parseWindowsAdapters(json) {
   });
 }
 
-export function parseMacDisplays(json, memBytes) {
+export function parseMacDisplays(json, memBytes, ioreg = '') {
   let doc;
   try { doc = JSON.parse(json); } catch { return []; }
+  const stats = parseIoreg(ioreg);
+  const vramMB = Math.round(memBytes / MB);
   return (doc.SPDisplaysDataType || []).slice(0, 1).map((g, index) => card({
-    id: `apple-${index}`, source: 'system_profiler', vendor: 'apple', name: g.sppci_model || g._name, index, vramMB: Math.round(memBytes / MB),
+    id: `apple-${index}`, source: 'system_profiler', vendor: 'apple', name: g.sppci_model || g._name, index, vramMB,
+    util: stats.util, freeMB: stats.inUseBytes == null || !vramMB ? null : Math.max(0, vramMB - Math.round(stats.inUseBytes / MB)),
   }));
+}
+
+// `ioreg -r -d 1 -w 0 -c IOAccelerator`: the GPU's use and the memory it has
+// in use, without admin rights. (Temperature and power on a Mac need admin
+// tools such as powermetrics, so they stay unknown.)
+export function parseIoreg(text) {
+  const t = String(text || '');
+  const util = num(/"Device Utilization %"\s*=\s*(\d+)/.exec(t)?.[1]);
+  const inUseBytes = num(/"In use system memory"\s*=\s*(\d+)/.exec(t)?.[1]);
+  return { util, inUseBytes };
 }
 
 export function parseRocmSmi(json) {
@@ -115,8 +128,9 @@ export async function detectCards({ run = execRun, platform = process.platform }
   const safe = async (cmd, args) => { try { return await run(cmd, args); } catch { return null; } };
   try {
     if (platform === 'darwin') {
-      const [json, mem] = await Promise.all([safe('system_profiler', ['SPDisplaysDataType', '-json']), safe('sysctl', ['-n', 'hw.memsize'])]);
-      return json ? parseMacDisplays(json, num(mem) ?? 0) : [];
+      const [json, mem, io] = await Promise.all([safe('system_profiler', ['SPDisplaysDataType', '-json']), safe('sysctl', ['-n', 'hw.memsize']),
+        safe('ioreg', ['-r', '-d', '1', '-w', '0', '-c', 'IOAccelerator'])]);
+      return json ? parseMacDisplays(json, num(mem) ?? 0, io || '') : [];
     }
     const nvidia = parseNvidiaSmi(await safe('nvidia-smi', NVIDIA_QUERY) || '');
     if (platform === 'win32') {
@@ -135,6 +149,22 @@ export async function detectCards({ run = execRun, platform = process.platform }
   } catch {
     return [];
   }
+}
+
+// Which backend a card's Ollama really runs on, from its server log: the
+// device it loaded the model on ("using device Vulkan0 (...)"), else what it
+// found at start ("inference compute ... library=CUDA"). Apple's MLX engine
+// names itself in its runner lines.
+const BACKEND_NAMES = { cuda: 'CUDA', vulkan: 'Vulkan', metal: 'Metal', mtl: 'Metal', rocm: 'ROCm', hip: 'ROCm', sycl: 'SYCL', mlx: 'MLX', cpu: 'CPU' };
+const backendName = (s) => BACKEND_NAMES[String(s).toLowerCase()] || s;
+export function backendFromLog(text) {
+  const t = String(text || '');
+  let best = null, at = -1;
+  const take = (re, i = 1) => { for (const m of t.matchAll(re)) if (m.index > at) { at = m.index; best = backendName(m[i]); } };
+  take(/msg="inference compute"[^\n]*?\blibrary=([A-Za-z]+)/g);
+  take(/using device ([A-Za-z]+?)\d* \(/g);
+  take(/\b(mlx)[ _-]?(?:runner|engine|server)\b/gi);
+  return best;
 }
 
 export function cardLabels(c) {

@@ -31,7 +31,7 @@ export function makeUnloader(ollama, log = () => {}) {
   let done = false;
   return {
     reset: () => { done = false; },
-    unload: async () => {
+    unload: async (why = 'paused') => {
       if (done) return;
       done = true;
       try {
@@ -40,8 +40,8 @@ export function makeUnloader(ollama, log = () => {}) {
           await fetch(`${ollama}/api/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model: m.name, keep_alive: 0 }) });
         }
-        log(`paused - unloaded ${(ps.models || []).length} model(s) from ${ollama}`);
-      } catch (e) { log(`paused - couldn't unload from ${ollama}: ${e.message}`); }
+        if ((ps.models || []).length) log(`${why} - unloaded ${ps.models.length} model(s) from ${ollama}`);
+      } catch (e) { log(`${why} - couldn't unload from ${ollama}: ${e.message}`); }
     },
   };
 }

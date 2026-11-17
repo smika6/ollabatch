@@ -31,7 +31,8 @@ import { tarFiles, appFiles } from './tar.mjs';
 // and the host's own built-in card stays off (two servers on one GPU would
 // fight over its memory, worst on a Mac's shared memory).
 async function probeLocalAgent() {
-  try { return (await fetch('http://127.0.0.1:11510/status', { signal: AbortSignal.timeout(1500) })).ok; } catch { return false; }
+  // Any answer counts: an agent still starting its GPU servers answers 503.
+  try { await fetch('http://127.0.0.1:11510/status', { signal: AbortSignal.timeout(1500) }); return true; } catch { return false; }
 }
 
 const DASHBOARD = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dashboard');
@@ -69,7 +70,7 @@ export function cleanReport(b) {
       vramMB: num(c?.vramMB), freeMB: num(c?.freeMB), util: num(c?.util), tempC: num(c?.tempC), powerW: num(c?.powerW),
       display: bool(c?.display), state: str(c?.state, 40), reason: str(c?.reason), slots: num(c?.slots),
       fixedSlots: c?.fixedSlots === 'auto' || c?.fixedSlots == null ? 'auto' : num(c.fixedSlots), paused: bool(c?.paused), disabled: bool(c?.disabled),
-      loadedModel: str(c?.loadedModel, 200), loadedModels: list(c?.loadedModels).map((x) => str(x, 200)).slice(0, 16), tuning: str(c?.tuning, 40),
+      backend: str(c?.backend, 20), loadedModel: str(c?.loadedModel, 200), loadedModels: list(c?.loadedModels).map((x) => str(x, 200)).slice(0, 16), tuning: str(c?.tuning, 40),
     })),
     playground: pg && { path: str(pg.path, 500), limitGB: num(pg.limitGB), usedBytes: num(pg.usedBytes) ?? 0, downloads: bool(pg.downloads),
       models: list(pg.models).slice(0, 500).map((x) => ({ name: str(x?.name, 200), size: num(x?.size) ?? 0, linked: bool(x?.linked), locked: bool(x?.locked) })) },
@@ -86,7 +87,7 @@ class HttpError extends Error {
 export async function startHost({
   port = 11500, password, stateDir = '.ollabatch', jobsFile = null, maxRunning = 1,
   local = null, bind = '0.0.0.0', now = Date.now, log = () => {},
-  localForced = false, agentProbe = probeLocalAgent,
+  localForced = false, agentProbe = probeLocalAgent, agentRecheckMs = 30_000,
   beacon = true, beaconPort = BEACON_PORT, beaconTargets = undefined,
 } = {}) {
   fs.mkdirSync(stateDir, { recursive: true });
@@ -803,6 +804,20 @@ export async function startHost({
           finish: (lease, result) => finish(lease.id, id, result),
           ollama: local.url, stop: localStop, isPaused: () => queue.isPaused(id), unload: unloader.unload,
         });
+      }
+      // An agent started on this machine later takes over its GPUs: the
+      // built-in card steps out instead of sharing the GPU with it.
+      const regTimer = timers.at(-1);
+      if (!localForced) {
+        timers.push(setInterval(async () => {
+          if (localStop.stopped || !(await agentProbe())) return;
+          localStop.stopped = true;
+          clearInterval(regTimer);
+          queue.leave(id);
+          changed();
+          log('a ollabatch agent started on this machine: it lends the GPUs now, so the built-in local card stepped out');
+        }, agentRecheckMs));
+        timers.at(-1).unref();
       }
     } catch (e) { log(`! local Ollama not joined (${e.message})`); }
   }
