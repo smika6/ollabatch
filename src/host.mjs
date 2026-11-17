@@ -17,6 +17,7 @@ import { parseStats, LoadCounter } from './infer.mjs';
 import { addRequestToJob, prune, trimLog, filterHistory, toCsv, timelineAdd } from './history.mjs';
 import { buildPrompt } from './summary.mjs';
 import { RemoteStore } from './remote.mjs';
+import { VERSION } from './version.mjs';
 import { parseSelector, matchesSelector } from './labels.mjs';
 import { chooseModel, modelForCard, rewriteModel } from './models.mjs';
 import { advance, etaSeconds, queueEta } from './progress.mjs';
@@ -142,9 +143,11 @@ export async function startHost({
   const liveCards = () => queue.activeWorkers().filter((w) => !w.paused);
 
   const saveState = () => writeJsonAtomic(files.state, { jobs: store.toJSON(), cardLabels: userLabels, settings, remote: remote.toJSON() });
+  let saveTimelines = () => {};   // set with job history below
   const saveMetrics = () => {
     try { writeJsonAtomic(files.metrics, metrics.toJSON()); writeJsonAtomic(files.insights, insights.toJSON()); }
     catch (e) { log(`! couldn't save metrics: ${e.message}`); }
+    saveTimelines();
   };
   const saver = createSaver(saveState, 500, (e) => log(`! couldn't save state: ${e.message}`));
   const changed = () => { saver.schedule(); setImmediate(tick); };
@@ -284,7 +287,7 @@ export async function startHost({
       workers: all, machines: [...byMachine].map(([machine, list]) => ({ machine, cards: list, report: reports.get(machine) || null,
         desired: remote.desired(machine), commands: remote.commands(machine).slice(0, 8) })),
       templates: templates.map((t) => ({ id: t.id, name: t.name, params: t.params, models: t.models || [], selector: t.selector || '' })),
-      settings: { maxRunning }, canCreate: isLoopback,
+      settings: { maxRunning }, canCreate: isLoopback, version: VERSION,
     };
   }
 
@@ -408,10 +411,17 @@ export async function startHost({
   const historyDir = path.join(stateDir, 'history');
   const timelines = new Map();   // running jobs' per-minute done counts
   const timelineFile = (id) => path.join(historyDir, `${id}.json`);
+  // A running job's graph is saved with the metrics (every minute and at
+  // shutdown), so a job that carries on after a host restart keeps its history.
   function progressed(job, done) {
-    if (!timelines.has(job.id)) timelines.set(job.id, {});
+    if (!timelines.has(job.id)) timelines.set(job.id, readJson(timelineFile(job.id)) || {});
     timelineAdd(timelines.get(job.id), done, now());
   }
+  saveTimelines = () => {
+    for (const [id, tl] of timelines) {
+      try { fs.mkdirSync(historyDir, { recursive: true }); writeJsonAtomic(timelineFile(id), tl); } catch { /* the graph is optional */ }
+    }
+  };
   function finished(job) {
     const tl = timelines.get(job.id);
     if (tl) {
@@ -618,7 +628,7 @@ export async function startHost({
       return send(res, ok ? 200 : 410, { accepted: ok });
     }
     if (req.method === 'GET' && p === '/pool/info') {
-      return send(res, 200, { token, port: listenPort, urls: lanAddresses().map((a) => `http://${a}:${listenPort}`) });
+      return send(res, 200, { token, port: listenPort, version: VERSION, urls: lanAddresses().map((a) => `http://${a}:${listenPort}`) });
     }
 
     // Control API.

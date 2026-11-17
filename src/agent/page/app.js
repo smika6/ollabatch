@@ -91,7 +91,7 @@ function fillForms() {
 
 function render() {
   const lending = S.cards.filter((c) => c.state === 'lending').length;
-  $('summary').textContent = `${S.machine}: ${lending} of ${S.cards.length} card${S.cards.length === 1 ? '' : 's'} lending${S.joined ? '' : ', not in a pool'}.`;
+  $('summary').textContent = `${S.machine}: ${lending} of ${S.cards.length} card${S.cards.length === 1 ? '' : 's'} lending${S.joined ? '' : ', not in a pool'}. ollabatch ${S.agent}`;
   $('watcherNote').hidden = S.watcher !== false;
   renderCards(); renderPool(); renderModels(); fillForms();
 }

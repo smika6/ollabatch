@@ -1,7 +1,7 @@
 // Machines: one shelf per machine, one bay per card, live sparklines, and —
 // for PCs whose owner lets the pool manage them — their settings and controls.
 import { $, S, call, patch, toast, busy, tone } from './core.mjs';
-import { esc, rate, hardwareMeta, ownerHolds, ownerText, idleBayHtml, playgroundLine, pendingFields, PENDING_TEXT, commandText, thrashing, THRASH_TEXT, whenText } from './view.mjs';
+import { esc, rate, hardwareMeta, ownerHolds, ownerText, idleBayHtml, playgroundLine, pendingFields, PENDING_TEXT, commandText, thrashing, THRASH_TEXT, whenText, versionNote } from './view.mjs';
 import { sparkSvg, chartSvg, fold } from './charts.mjs';
 
 export const M = { editing: null, spark: {}, cardOpen: null, cardRange: '1h' };
@@ -102,7 +102,7 @@ function idleBay(hw, m, pend) {
 function panel(m, pend) {
   const r = m.report;
   if (!r) return '<p class="note shelf-note">This machine joined without the ollabatch agent, so only its cards show here.</p>';
-  if (!r.remote) return `<p class="note shelf-note">Managed by its owner: lends ${esc(POLICY_TEXT[r.policy] || r.policy)}. To manage it from here, tick “Let the pool manage this PC” on that PC's ollabatch page (http://127.0.0.1:11510).</p>`;
+  if (!r.remote) return `<p class="note shelf-note">Managed by its owner: lends ${esc(POLICY_TEXT[r.policy] || r.policy || "by its own rules")}. To manage it from here, tick “Let the pool manage this PC” on that PC's ollabatch page (http://127.0.0.1:11510).</p>`;
   const w = r.schedule?.[0] || { days: [0, 1, 2, 3, 4, 5, 6], from: '23:00', to: '07:00' };
   const models = r.playground?.models || [];
   const cardName = (id) => r.cards.find((c) => c.id === id)?.name || id;
@@ -143,7 +143,9 @@ export function renderMachines() {
     const pg = playgroundLine(m.report);
     const pend = pendingFields(m);
     const badge = m.report ? (m.report.remote ? '<span class="badge on">managed by the pool</span>' : '<span class="badge">managed by its owner</span>') : '';
+    const vnote = versionNote(m.report?.agent, s.version);
     return { key: m.machine, html: `<div class="shelf"><h3>${esc(m.machine)}<span>${badge} ${on} of ${total} card${total === 1 ? '' : 's'} lending</span></h3>
+      ${m.report?.agent ? `<p class="note shelf-note">agent ${esc(m.report.agent)}${vnote ? ` <span class="pend pending">${esc(vnote)}</span>` : ''}</p>` : ''}
       ${pg ? `<p class="note shelf-note">${esc(pg)}</p>` : ''}
       ${m.cards.map((c) => bay(c, m, pend, thrash.has(c.id))).join('')}${idle.map((hw) => idleBay(hw, m, pend)).join('')}
       ${panel(m, pend)}</div>` };

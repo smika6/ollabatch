@@ -11,6 +11,7 @@ import { startAgent } from '../src/agent/agent.mjs';
 import { startPage } from '../src/agent/page.mjs';
 import { installAgent, uninstallAgent, defaults, realIo } from '../src/agent/install.mjs';
 import { loadConfig, saveConfig } from '../src/agent/config.mjs';
+import { VERSION } from '../src/version.mjs';
 
 const HELP = {
   host: 'ollabatch host [--port 11500] [--password pw] [--jobs ollabatch.jobs.json] [--max-running 1] [--state .ollabatch] [--local http://127.0.0.1:11434] [--local-slots 2] [--no-local] [--no-beacon]',
@@ -184,6 +185,7 @@ function need(a, i, cmd) {
 
 async function main() {
   const [cmd, ...argv] = process.argv.slice(2);
+  if (cmd === '--version' || cmd === 'version' || cmd === '-v') { console.log(`ollabatch ${VERSION}`); return; }
   if (!cmd || cmd === 'help' || cmd === '--help') {
     console.log(Object.values(HELP).join('\n'));
     return;

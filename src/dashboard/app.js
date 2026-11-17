@@ -174,6 +174,7 @@ async function tick() {
     showGate(false);
     S.switchesLastHour = I.now?.switchesLastHour;
     S.loadedModels = I.now?.loadedModels;
+    $('hostVersion').textContent = S.status.version ? `v${S.status.version}` : '';
     renderSummary(S.status); renderJobs(S.status); renderMachines(); renderAddForm(S.status);
     fillTemplates(S.status.templates);
     announce(S.status);

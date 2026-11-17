@@ -114,6 +114,16 @@ export const PENDING_TEXT = { pending: 'waiting for the PC', override: 'changed 
 
 // Cards that switched models more than `limit` times in the last hour. Reloading
 // the same model (a restart, the slot tuner trying a new count) isn't switching.
+// A machine's agent on a different version than the host: say so, and how to update.
+export function versionNote(agent, host) {
+  if (!agent || !host || agent === host) return null;
+  const n = (v) => String(v).split('.').map(Number);
+  const [a, h] = [n(agent), n(host)];
+  const older = a[0] < h[0] || (a[0] === h[0] && (a[1] < h[1] || (a[1] === h[1] && a[2] < h[2])));
+  return older ? `older than the host's ${host}: run the installer from “Add a machine” on that PC to update`
+    : `newer than the host's ${host}: update the host (git pull, restart)`;
+}
+
 export const thrashing = (switchesLastHour, limit = 6) => Object.entries(switchesLastHour || {}).filter(([, n]) => n > limit).map(([id]) => id);
 export const THRASH_TEXT = 'This card keeps switching models. Give its jobs one model, or a selector that keeps them on separate cards.';
 

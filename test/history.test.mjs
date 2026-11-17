@@ -95,6 +95,24 @@ test('the host keeps per-job stats, a timeline, notes, logs and history', async 
   assert.equal((await call('GET', `/ob/jobs/${j.id}`)).status, 404);
 });
 
+test('a running job\'s progress graph survives a host restart', async () => {
+  const dir = tmp();
+  const h = await startHost({ port: 0, password: 'secret-pw', stateDir: dir, beacon: false });
+  const f = await startFakeOllama();
+  const w = await pullWorker(`http://127.0.0.1:${h.port}`, { id: 'w', ollama: f.url, token: 'secret-pw' });
+  const call = api(`http://127.0.0.1:${h.port}`, 'secret-pw');
+  const j = (await call('POST', '/ob/jobs', { name: 'long', command: process.execPath, args: ['-e', 'setTimeout(()=>{},20000)'], cwd: DATA })).json;
+  await waitFor(async () => (await call('GET', `/ob/jobs/${j.id}`)).json.status === 'running', 10_000, 'running');
+  assert.equal((await call('POST', `/ob/jobs/${j.id}/progress`, { done: 5, total: 10 })).status, 200);
+  w.stop();
+  await h.close();
+  await f.close();
+  const h2 = await startHost({ port: 0, password: 'secret-pw', stateDir: dir, beacon: false });
+  after(() => h2.close());
+  const d = (await api(`http://127.0.0.1:${h2.port}`, 'secret-pw')('GET', `/ob/jobs/${j.id}`)).json;
+  assert.equal(d.timeline?.done.at(-1), 5);
+});
+
 test('history search also finds models used, summaries and notes', () => {
   const jobs = [
     { id: 'a', name: 'one', status: 'done', finishedAt: 3, modelsUsed: ['gemma4:12b'] },

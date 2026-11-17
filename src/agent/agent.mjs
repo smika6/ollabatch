@@ -17,12 +17,12 @@ import { startCardWorker } from '../card-worker.mjs';
 import { listenBeacons, BEACON_PORT } from '../discovery.mjs';
 import { recordServers, reapRecorded } from './reap.mjs';
 import { validSchedule } from '../remote.mjs';
+import { VERSION } from '../version.mjs';
 import { startIntelTelemetry, intelFor } from './inteltel.mjs';
 
 const GB = 1024 ** 3, MB = 1024 ** 2;
 const STALL_MS = 120_000;                 // a download with no progress this long is abandoned
 const RETRY_BASE_MS = 10 * 60_000, RETRY_MAX_MS = 6 * 60 * 60_000;
-const VERSION = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
 
 export async function startAgent({
   dir = path.join(os.homedir(), '.ollabatch', 'agent'), host, password, trusted = false,
