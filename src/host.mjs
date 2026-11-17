@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { RequestQueue } from './queue.mjs';
+import { RequestQueue, errorText } from './queue.mjs';
 import { JobStore, JobStateError } from './jobs.mjs';
 import { Metrics } from './metrics.mjs';
 import { Insights } from './insights.mjs';
@@ -436,7 +436,7 @@ export async function startHost({
     const job = lease.jobId !== '_' && store.get(lease.jobId);
     if (!job) return;
     addRequestToJob(job, { card: workerId, cardLabel: queue.workers.get(workerId)?.label, ok, retried: lease.attempts > 1, stats,
-      error: ok ? null : result.error || `HTTP ${result.status}` });
+      error: ok ? null : errorText(result) });
     saver.schedule();
   };
   function forget(id) {

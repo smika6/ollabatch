@@ -86,7 +86,7 @@ function bay(c, m, pend, thrash) {
     ${held ? `<div class="note">${esc(ownerText(c.owner))}</div>` : ''}
     ${thrash ? `<div class="warn small">${esc(THRASH_TEXT)}</div>` : ''}
     <div class="chips">${c.models.map((x) => `<span class="chip">${esc(x)}</span>`).join('')}${chips}</div>
-    ${c.lastError ? `<div class="err">Last error: ${esc(c.lastError)}</div>` : ''}
+    ${c.lastError && (!c.lastErrorAt || Date.now() - c.lastErrorAt < 30 * 60_000) ? `<div class="err">Last error${c.lastErrorAt ? ` at ${esc(whenText(c.lastErrorAt))}` : ''} (${c.failed.toLocaleString('en-US')} failed of ${(c.done + c.failed).toLocaleString('en-US')}): ${esc(c.lastError)}</div>` : ''}
     ${edit}
     ${c.active ? `<div class="acts">${pauseBtn}<button data-edit="${esc(c.id)}">Edit labels</button></div>` : ''}
     ${cardControls(m, hw, pend)}

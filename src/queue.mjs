@@ -13,6 +13,16 @@
 //     gets the last error;
 //   - any other 4xx is returned as-is — retrying won't help.
 
+// What went wrong, in words: Ollama's own message when it sent one
+// ("HTTP 500: model failed to load"), not just the status.
+export function errorText(result) {
+  if (!result) return 'no answer';
+  if (result.error) return String(result.error).slice(0, 200);
+  let msg = '';
+  try { msg = JSON.parse(result.body || '{}').error || ''; } catch { msg = String(result.body || '').trim().split('\n')[0]; }
+  return `HTTP ${result.status}${msg ? `: ${msg}` : ''}`.slice(0, 200);
+}
+
 export class RequestQueue {
   constructor({ leaseMs = 600_000, maxAttempts = 4, now = Date.now, canServe = () => true, rankOf = () => 0 } = {}) {
     this.leaseMs = leaseMs;
@@ -121,8 +131,18 @@ export class RequestQueue {
         : { status: result.status, body: result.body });
       return true;
     }
-    if (w) { w.failed++; w.lastError = String(result?.error || `HTTP ${result?.status}`).slice(0, 200); }
-    if (r.attempts >= (r.maxAttempts ?? this.maxAttempts)) {
+    const text = errorText(result);
+    if (w) { w.failed++; w.lastError = text; w.lastErrorAt = this.now(); }
+    // The same error from two different cards is the request's fault (a prompt
+    // the model can't answer), not the cards': hand it back instead of trying
+    // every card in the pool. A card that couldn't be reached (status 0) says
+    // nothing about the request.
+    const firstFrom = result?.status ? (r.errors ??= new Map()) : null;
+    const sameElsewhere = firstFrom && [...firstFrom].some(([card, t]) => card !== workerId && t === text);
+    firstFrom?.set(workerId, text);
+    if (sameElsewhere) {
+      r.resolve({ status: result.status, body: JSON.stringify({ error: `ollabatch: ${firstFrom.size} cards failed this request the same way, so it wasn't tried again — ${text}` }) });
+    } else if (r.attempts >= (r.maxAttempts ?? this.maxAttempts)) {
       r.resolve({ status: 502, body: JSON.stringify({ error: `ollabatch: gave up after ${r.attempts} attempts — last: ${w?.lastError || 'unknown'}` }) });
     } else {
       this.#requeue(r, w?.lastError);
@@ -195,7 +215,7 @@ export class RequestQueue {
       id: w.id, label: w.label, host: w.host, machine: w.machine, labels: w.labels, models: w.models,
       slots: w.slots, active: active.has(w.id), paused: !!w.paused, jobId: w.jobId,
       inflight: inflightBy[w.id] || 0, done: w.done, failed: w.failed, avgMs: Math.round(w.emaMs),
-      perSec: +(w.recent.filter((t) => t >= since).length / (windowMs / 1000)).toFixed(2), lastError: w.lastError || '',
+      perSec: +(w.recent.filter((t) => t >= since).length / (windowMs / 1000)).toFixed(2), lastError: w.lastError || '', lastErrorAt: w.lastErrorAt || null,
     }));
     return {
       workers, queued: this.pending.length, inflight: this.leased.size,

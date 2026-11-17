@@ -12,6 +12,7 @@ import { startPage } from '../src/agent/page.mjs';
 import { installAgent, uninstallAgent, defaults, realIo } from '../src/agent/install.mjs';
 import { loadConfig, saveConfig } from '../src/agent/config.mjs';
 import { VERSION } from '../src/version.mjs';
+import { fileLog } from '../src/agent/filelog.mjs';
 
 const HELP = {
   host: 'ollabatch host [--port 11500] [--password pw] [--jobs ollabatch.jobs.json] [--max-running 1] [--state .ollabatch] [--local http://127.0.0.1:11434] [--local-slots 2] [--no-local] [--no-beacon]',
@@ -131,7 +132,11 @@ const COMMANDS = {
       if (e.code === 'EADDRINUSE') throw new Error('an agent is already running on this machine (http://127.0.0.1:11510/)');
       throw e;
     }
-    agent = await startAgent({ dir: f.dir, host: f.host, password: f.password, trusted: !!f.trusted, log: (s) => console.log(s) });
+    const dir = f.dir || path.join(os.homedir(), '.ollabatch', 'agent');
+    const toFile = fileLog(path.join(dir, 'agent.log'));
+    const log = (s) => { console.log(s); toFile(s); };
+    log(`ollabatch ${VERSION} agent starting`);
+    agent = await startAgent({ dir, host: f.host, password: f.password, trusted: !!f.trusted, log });
     page.setAgent(agent);
     console.log(`agent running - its page: http://127.0.0.1:${page.port}/`);
     process.on('SIGINT', stop);

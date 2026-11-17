@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RequestQueue } from '../src/queue.mjs';
+import { RequestQueue, errorText } from '../src/queue.mjs';
 
 const ok = (body = '{"ok":1}') => ({ status: 200, body });
 const req = (body, jobId = 'j1') => ({ jobId, path: '/api/chat', body });
 
-// ── core queue behaviour ────────────────────────────────
+// â”€â”€ core queue behaviour â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 test('a waiting worker gets a request the moment a client enqueues it', async () => {
   const q = new RequestQueue();
@@ -52,6 +52,45 @@ test('re-queues a worker failure to a different worker', async () => {
   const bad = q.status().workers.find((w) => w.id === 'bad');
   assert.equal(bad.failed, 1);
   assert.equal(bad.done, 0);
+});
+
+test('errors say what Ollama said, and when', async () => {
+  assert.equal(errorText({ status: 500, body: '{"error":"model runner has unexpectedly stopped"}' }), 'HTTP 500: model runner has unexpectedly stopped');
+  assert.equal(errorText({ status: 502, body: 'Bad Gateway\nmore' }), 'HTTP 502: Bad Gateway');
+  assert.equal(errorText({ status: 500, body: '' }), 'HTTP 500');
+  assert.equal(errorText({ status: 0, error: 'ECONNREFUSED' }), 'ECONNREFUSED');
+  const t = 1000;
+  const q = new RequestQueue({ now: () => t });
+  q.register('a'); q.register('b');
+  q.enqueue(req('x'));
+  const r = await q.take('a');
+  q.complete(r.id, 'a', { status: 500, body: '{"error":"boom"}' });
+  const a = q.status().workers.find((w) => w.id === 'a');
+  assert.deepEqual([a.lastError, a.lastErrorAt], ['HTTP 500: boom', 1000]);
+});
+
+test('a request that fails the same way on two cards is handed back, not tried on every card', async () => {
+  const q = new RequestQueue();
+  for (const id of ['a', 'b', 'c']) q.register(id);
+  const result = q.enqueue(req('poison'));
+  const bad = { status: 500, body: '{"error":"failed to parse output"}' };
+  const r1 = await q.take('a');
+  q.complete(r1.id, 'a', bad);
+  const r2 = await q.take('b');
+  q.complete(r2.id, 'b', bad);
+  const res = await result;
+  assert.equal(res.status, 500);
+  assert.match(JSON.parse(res.body).error, /2 cards failed this request the same way.*failed to parse output/);
+  assert.equal(q.status().queued, 0, 'card c never got it');
+  // A card that couldn't be reached says nothing about the request: keep going.
+  const again = q.enqueue(req('flaky'));
+  const s1 = await q.take('a');
+  q.complete(s1.id, 'a', { status: 0, error: 'ECONNREFUSED' });
+  const s2 = await q.take('b');
+  q.complete(s2.id, 'b', { status: 0, error: 'ECONNREFUSED' });
+  const s3 = await q.take('c');
+  q.complete(s3.id, 'c', ok());
+  assert.equal((await again).status, 200);
 });
 
 test('a missing model (404) is retryable, other 4xx are final', async () => {
@@ -116,7 +155,7 @@ test('a paused worker gets no new requests and resumes cleanly', async (t) => {
   assert.equal((await q.take('gpu')).body, 'x');
 });
 
-// ── job-aware routing ───────────────────────────────────────────────────────
+// â”€â”€ job-aware routing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 test('routes only to eligible cards', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });

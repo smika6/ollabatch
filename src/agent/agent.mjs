@@ -146,6 +146,7 @@ export async function startAgent({
   }
 
   async function apply() {
+    const before = new Map([...cards].map(([id, c]) => [id, c.state]));
     const ids = [...cards.keys()];
     const ownerPaused = new Set(ids.filter((id) => cardCfg(id).paused));
     // A policy the pool set never lends a card while a fullscreen program uses
@@ -195,6 +196,12 @@ export async function startAgent({
       c.pausedFor = null;
     }
     for (const c of cards.values()) if (c.state !== 'lending' && c.state !== 'waiting-for-host' && c.worker) c.pausedFor = c.state;
+    // Every change of a card's state goes to the log: why it paused, stepped
+    // aside or came back is what you need when something looks wrong.
+    for (const [id, c] of cards) {
+      const was = before.get(id);
+      if (was !== c.state) log(`${c.card.name}: ${was ?? 'new'} -> ${c.state}${c.reason ? ` (${c.reason})` : ''}`);
+    }
   }
 
   // Restart a card's server (a slot change, or by request) without leasing
@@ -229,6 +236,7 @@ export async function startAgent({
       const st = c.worker.stats();
       const act = c.tuner.observe({ completed: st.done, oomErrors: st.oomErrors, freeMB: c.card.freeMB, totalMB: c.card.vramMB, queued: st.inflight > 0 });
       if (act) {
+        log(`${c.card.name}: trying ${act.setSlots} at once (was ${c.server.slots}); restarting its server`);
         await c.worker.setPaused(true, 'retuning');
         const r = await c.server.restart(act.setSlots);
         await c.worker.setSlots(act.setSlots);
