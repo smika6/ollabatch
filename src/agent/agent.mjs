@@ -41,11 +41,16 @@ export async function startAgent({
   const save = () => { try { saveConfig(dir, cfg); } catch (e) { log(`! couldn't save config: ${e.message}`); } };
   save();
   const tunings = readJson(path.join(dir, 'tuning.json')) || {};
+  // Adapter LUIDs only change when Windows restarts: keep what was learned for
+  // this boot, so a restarted agent shows an idle Arc's use and memory at once.
+  const luidFile = path.join(dir, 'luids.json');
+  const bootAt = Date.now() - os.uptime() * 1000;
+  const savedLuids = readJson(luidFile);
   const logDir = path.join(dir, 'logs');
   const policy = new LendPolicy({ now });
   const cards = new Map();   // cardId → { card, server, worker, tuner, state, reason, version }
   let inUse = new Set();
-  let luids = {};   // cardId → adapter LUID, remembered across samples
+  let luids = savedLuids && Math.abs(savedLuids.bootAt - bootAt) < 120_000 ? savedLuids.luids || {} : {};   // cardId → adapter LUID
   let adapters = { at: 0, stats: {} };   // the latest per-adapter use and memory (Windows)
   let download = null;
   const failures = {};   // model → { count, until }: downloads back off after failing
@@ -101,7 +106,9 @@ export async function startAgent({
     platform,
     onSample: (sample) => {
       const pids = Object.fromEntries([...cards].filter(([, c]) => c.server?.child?.pid).map(([id, c]) => [id, c.server.child.pid]));
-      luids = rememberLuids(luids, learnLuids(sample, pids));
+      const next = rememberLuids(luids, learnLuids(sample, pids));
+      if (JSON.stringify(next) !== JSON.stringify(luids)) { try { writeJsonAtomic(luidFile, { bootAt, luids: next }); } catch { /* next time */ } }
+      luids = next;
       adapters = { at: Date.now(), stats: adapterStats(sample) };
       inUse = cardsInUse(sample, { luids, ownPids: ownPids(sample, pids), cards: [...cards.values()].map((c) => c.card) });
     },
@@ -165,7 +172,14 @@ export async function startAgent({
             id: workerId(id), label: c.card.name, machine, log, releaseNetworkErrors: true,
             labels: { ...cardLabels(c.card), ...(cardCfg(id).labels || {}) },
             hardware: { name: c.card.name, vendor: c.card.vendor, vramMB: c.card.vramMB } });
-        } catch (e) { Object.assign(c, { state: 'not-joined', reason: `can't reach the host: ${e.message}` }); continue; }
+        } catch (e) {
+          // The host is down or restarting: wait for it (retried every check), not "not joined".
+          const unreachable = /fetch failed|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|timeout/i.test(`${e.message} ${e.cause?.code || ''}`);
+          Object.assign(c, unreachable
+            ? { state: 'waiting-for-host', reason: `the pool's host (${cfg.host}) isn't answering; this card joins as soon as it does` }
+            : { state: 'not-joined', reason: `the host turned this card away: ${e.message}` });
+          continue;
+        }
       } else if (c.pausedFor) {
         c.tuner?.onRestart();   // a fresh measurement after a pause
         await c.worker.setPaused(false);

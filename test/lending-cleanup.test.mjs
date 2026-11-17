@@ -54,6 +54,29 @@ test('when the host goes away the card notices, frees the GPU, and carries on wh
   assert.equal((await chat(api(base, 'secret-pw'))).status, 200, 'working again');
 });
 
+test('an agent that starts while its host is down waits for it, then joins', async () => {
+  const { startAgent } = await import('../src/agent/agent.mjs');
+  const { fileURLToPath } = await import('node:url');
+  const DATA = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'testdata');
+  const dir = tmp();
+  const probe = await startHost({ port: 0, password: 'secret-pw', stateDir: dir, beacon: false });
+  const port = probe.port;
+  await probe.close();   // a free port, nothing listening: the host is down
+  const a = await startAgent({
+    dir: tmp(), host: `http://127.0.0.1:${port}`, password: 'secret-pw', machine: 'box', trusted: true,
+    run: async (cmd) => (cmd === 'nvidia-smi' ? fs.readFileSync(path.join(DATA, 'probes', 'nvidia-smi.csv'), 'utf8') : null), platform: 'linux',
+    ollama: { command: process.execPath, args: [path.join(DATA, 'fake-ollama-bin.mjs')] }, serverEnv: (card) => ({ FAKE_GPU: card.name }),
+    userStore: tmp(), tickMs: 200, basePort: 43000 + Math.floor(Math.random() * 9000),
+    watcher: () => ({ supported: true, stop() {} }), fetchRegistry: async () => ({ ok: false }),
+  });
+  cleanup.push(() => a.close());
+  await waitFor(() => a.status().cards.length === 2 && a.status().cards.every((c) => c.state === 'waiting-for-host'), 45_000, 'waiting for the host');
+  assert.match(a.status().cards[0].reason, /isn't answering/);
+  const h = await startHost({ port, password: 'secret-pw', stateDir: dir, beacon: false });
+  cleanup.push(() => h.close());
+  await waitFor(() => a.status().cards.every((c) => c.state === 'lending'), 30_000, 'joined once the host is up');
+});
+
 test('the host\'s built-in card steps out when an agent starts on its machine later', async () => {
   let agent = false;
   const f = await startFakeOllama();
