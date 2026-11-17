@@ -110,9 +110,15 @@ models in memory and playground, with sparklines for temperature, memory and
 use; click one for that card's graphs over up to 30 days. Where the numbers come from: `nvidia-smi` for
 NVIDIA; Intel's Graphics Control Library (installed with Arc drivers) for an
 Intel card's temperature, power and use on Windows; Windows' own counters for
-any other card's use and memory; `ioreg` for an Apple GPU's use and memory
-(macOS shows its temperature and power only to admin tools, so those read
-unknown). Each card also shows the backend its Ollama really uses (CUDA,
+any other card's use and memory; `ioreg` for an Apple GPU's use and memory.
+A Mac's GPU power and thermal pressure come from `powermetrics`, which needs
+root: allow just that one command once, on the Mac, and the agent picks it up
+(Apple silicon has no GPU temperature in degrees to report):
+
+```bash
+echo "$(whoami) ALL=(root) NOPASSWD: /usr/bin/powermetrics" | sudo tee /etc/sudoers.d/ollabatch-powermetrics && sudo chmod 440 /etc/sudoers.d/ollabatch-powermetrics
+```
+ Each card also shows the backend its Ollama really uses (CUDA,
 Vulkan, Metal, MLX), from that server's log.
 
 ## History and AI summaries

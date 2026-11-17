@@ -8,6 +8,10 @@ update the host, `git pull` and restart it.
 
 ## Unreleased
 
+- Mac GPU power and thermal pressure from `powermetrics`, once its owner
+  allows that one command to run without a password (see the README); the
+  dashboard shows "thermal nominal" where a temperature would be.
+
 ## 0.2.0 (2026-11-17)
 
 **Watching and steering a running pool.**
