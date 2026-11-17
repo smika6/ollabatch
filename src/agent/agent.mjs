@@ -50,6 +50,40 @@ export async function startAgent({
   let closed = false;
 
   const cardCfg = (id) => (cfg.cards[id] ??= {});
+
+  // Every setting the owner (on the local page) or, when they allow it, the
+  // pool (from the dashboard) can change, by field. `norm` is what `set`
+  // would store, so "does this PC differ from what the pool asked" compares like with like.
+  const POLICIES = ['when-free', 'always', 'schedule', 'never'];
+  const slotsOf = (v) => {
+    if (v == null || v === 'auto') return 'auto';
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 1 || n > 8) throw new Error('slots is auto or a number from 1 to 8');
+    return n;
+  };
+  const FIELDS = {
+    policy: { get: () => cfg.policy, norm: (v) => v,
+      set: (v) => { if (!POLICIES.includes(v)) throw new Error('policy is when-free, always, schedule or never'); cfg.policy = v; } },
+    schedule: { get: () => cfg.schedule, norm: (v) => v,
+      set: (v) => { if (!Array.isArray(v)) throw new Error('schedule must be a list'); cfg.schedule = v; } },
+    'playground.limitGB': { get: () => cfg.playground.limitGB, norm: (v) => Math.max(1, Number(v)),
+      set: (v) => { if (!Number.isFinite(Number(v))) throw new Error('the playground limit must be a number of GB'); cfg.playground.limitGB = Math.max(1, Number(v)); } },
+    'playground.downloads': { get: () => cfg.playground.downloads, norm: (v) => !!v, set: (v) => { cfg.playground.downloads = !!v; } },
+    locked: { get: () => cfg.playground.locked, norm: (v) => (Array.isArray(v) ? [...new Set(v.map(String))] : v),
+      set: (v) => { if (!Array.isArray(v)) throw new Error('locked must be a list of models'); cfg.playground.locked = [...new Set(v.map(String))]; } },
+  };
+  function field(name) {
+    if (FIELDS[name]) return FIELDS[name];
+    const m = /^cards\.([\w-]+)\.(paused|disabled|slots)$/.exec(name);
+    if (!m) return null;
+    const [, id, k] = m;
+    if (k === 'slots') {
+      return { get: () => cardCfg(id).slots ?? 'auto', norm: (v) => { try { return slotsOf(v); } catch { return v; } },
+        set: (v) => { const n = slotsOf(v); if (n === 'auto') delete cardCfg(id).slots; else cardCfg(id).slots = n; } };
+    }
+    return { get: () => !!cardCfg(id)[k], norm: (v) => !!v, set: (v) => { cardCfg(id)[k] = !!v; } };
+  }
+  const setLocal = (name, value) => { field(name).set(value); cfg.changedAt[name] = now(); };
   const headers = () => ({ 'Content-Type': 'application/json', 'x-pool-token': cfg.password || '' });
   const workerId = (id) => `${machine}-${id}`;
 
@@ -70,8 +104,9 @@ export async function startAgent({
     if (c.server || c.card.integrated || cardCfg(c.card.id).disabled) return;
     const [port] = await pickPorts(1, isPortFree, basePort + c.index * 2);
     const saved = tunings[c.card.id];
+    const fixed = cardCfg(c.card.id).slots;
     c.server = new CardServer({
-      card: c.card, port, slots: saved?.slots || 1, playground: cfg.playground.path, ollama, logDir, log,
+      card: c.card, port, slots: fixed || saved?.slots || 1, playground: cfg.playground.path, ollama, logDir, log,
       vulkanCandidates: [...cards.keys()].map((_, i) => i),
       // The agent's servers share one playground; never let one prune what another is pulling.
       extraEnv: { OLLAMA_NOPRUNE: '1', ...serverEnv(c.card) },
@@ -82,7 +117,7 @@ export async function startAgent({
     if (!r.confirmed) return;
     try { c.version = (await (await fetch(`${c.server.url}/api/version`)).json()).version; } catch { c.version = null; }
     c.tuner = new SlotTuner({ now, saved, ollamaVersion: c.version });
-    if (c.tuner.slots !== c.server.slots) await c.server.restart(c.tuner.slots);
+    if (!fixed && c.tuner.slots !== c.server.slots) await c.server.restart(c.tuner.slots);
   }
 
   async function apply() {
@@ -121,9 +156,35 @@ export async function startAgent({
     for (const c of cards.values()) if (c.state !== 'lending' && c.worker) c.pausedFor = c.state;
   }
 
+  // Restart a card's server (a slot change, or by request) without leasing
+  // work to it meanwhile; resumes only if it was lending before.
+  async function restartCard(c, slots) {
+    const lending = c.state === 'lending';
+    await c.worker?.setPaused(true, 'restarting');
+    const r = await c.server.restart(slots);
+    await c.worker?.setSlots(slots);
+    c.tuner?.onRestart();
+    if (lending && r.confirmed) await c.worker?.setPaused(false);
+    else if (lending) c.pausedFor = 'restarting';   // the next apply() resumes it once the server is back
+    return r;
+  }
+
   async function tune() {
     for (const [id, c] of cards) {
       if (c.state !== 'lending' || !c.worker || !c.tuner) continue;
+      // Slots fixed by the owner (or the pool): no measuring, just hold them.
+      const fixed = cardCfg(id).slots;
+      if (fixed) {
+        c.fixed = true;
+        if (c.server.slots !== fixed) await restartCard(c, fixed);
+        continue;
+      }
+      if (c.fixed) {   // back to auto: pick up where the saved tuning left off
+        c.fixed = false;
+        c.tuner = new SlotTuner({ now, saved: tunings[id], ollamaVersion: c.version });
+        if (c.tuner.slots !== c.server.slots) await restartCard(c, c.tuner.slots);
+        continue;
+      }
       const st = c.worker.stats();
       const act = c.tuner.observe({ completed: st.done, oomErrors: st.oomErrors, freeMB: c.card.freeMB, totalMB: c.card.vramMB, queued: st.inflight > 0 });
       if (act) {
@@ -189,6 +250,111 @@ export async function startAgent({
     }
   }
 
+  async function startPull(model) {
+    if (!model) throw new Error('which model?');
+    if (download) throw new Error(`already downloading ${download.model}`);
+    const c = [...cards.values()].find((x) => x.server?.state === 'ready');
+    if (!c) throw new Error('no card server is running yet');
+    cfg.playground.lastUsed[model] = now();   // so the next eviction doesn't take it straight back out
+    download = { model, completed: 0, total: null };
+    pull(c, model).then(refreshAll).catch(() => {});
+  }
+
+  async function removeLocal(model) {
+    if (cfg.playground.locked.includes(model)) throw new Error(`${model} is locked`);
+    const any = [...cards.values()].find((c) => c.server?.state === 'ready');
+    if (any) await del(any, model); else removeModel(cfg.playground.path, model);
+    await refreshAll();
+  }
+
+  async function runCommand(cmd) {
+    const c = cmd.card ? cards.get(cmd.card) : null;
+    if (cmd.card && !c) throw new Error(`no card ${cmd.card} on this machine`);
+    switch (cmd.type) {
+      case 'restart-card': {
+        if (!c?.server) throw new Error('that card has no server to restart');
+        const r = await restartCard(c, c.server.slots);
+        if (!r.confirmed) throw new Error(`${c.card.name}'s server hasn't come back yet; the agent keeps trying`);
+        return;
+      }
+      case 'retune': {
+        if (!c?.server) throw new Error('that card has no server yet');
+        if (cardCfg(cmd.card).slots) throw new Error(`slots are fixed at ${cardCfg(cmd.card).slots}; set them to auto first`);
+        delete tunings[cmd.card];
+        try { writeJsonAtomic(path.join(dir, 'tuning.json'), tunings); } catch { /* next time */ }
+        c.tuner = new SlotTuner({ now, saved: null, ollamaVersion: c.version });
+        await restartCard(c, c.tuner.slots);
+        log(`re-tuning ${c.card.name} from 1 slot`);
+        return;
+      }
+      case 'pull': return startPull(cmd.model);
+      case 'remove-model': return removeLocal(cmd.model);
+      default: throw new Error(`unknown command ${cmd.type}`);
+    }
+  }
+
+  // Settings and commands from the pool, pulled each tick (agents only ever
+  // connect out). A field the pool set is applied only if the owner hasn't
+  // changed it here since; comparing needs the host's clock against ours, so
+  // the host sends its time and we correct for the difference.
+  let localOverride = [];
+  async function syncRemote() {
+    if (!cfg.host) return;
+    const q = `machine=${encodeURIComponent(machine)}`;
+    if (cfg.remote) {
+      try {
+        const t0 = now();
+        const r = await fetch(`${cfg.host}/pool/settings?${q}`, { headers: headers(), signal: AbortSignal.timeout(5000) });
+        if (r.ok) {
+          const d = await r.json();
+          const skew = d.now != null ? d.now - (t0 + now()) / 2 : 0;
+          let dirty = false;
+          for (const [name, f] of Object.entries(d.fields || {})) {
+            const fl = field(name);
+            if (!fl || cfg.remoteSeen[name] === f.at) continue;
+            cfg.remoteSeen[name] = f.at;
+            dirty = true;
+            if ((cfg.changedAt[name] ?? 0) >= f.at - skew) continue;   // the owner changed it here since
+            try { fl.set(f.value); cfg.changedAt[name] = f.at - skew; log(`the pool set ${name}`); }
+            catch (e) { log(`! the pool's ${name} was refused: ${e.message}`); }
+          }
+          if (cfg.remoteVersion !== d.version) { cfg.remoteVersion = d.version; dirty = true; }
+          localOverride = Object.entries(d.fields || {})
+            .filter(([name, f]) => field(name) && JSON.stringify(field(name).get()) !== JSON.stringify(field(name).norm(f.value)))
+            .map(([name]) => name);
+          if (dirty) save();
+        }
+      } catch { /* host down: next tick */ }
+    } else localOverride = [];
+    let list;
+    try {
+      const r = await fetch(`${cfg.host}/pool/commands?${q}`, { headers: headers(), signal: AbortSignal.timeout(5000) });
+      if (!r.ok) return;
+      list = (await r.json()).commands || [];
+    } catch { return; }
+    for (const cmd of list) {
+      let error = null;
+      if (!cfg.remote) error = "rejected: this PC's owner hasn't let the pool manage it";
+      else {
+        try { await runCommand(cmd); log(`ran the pool's ${cmd.type}${cmd.card ? ` on ${cmd.card}` : ''}${cmd.model ? ` ${cmd.model}` : ''}`); }
+        catch (e) { error = e.message; }
+      }
+      try {
+        await fetch(`${cfg.host}/pool/commands/${encodeURIComponent(cmd.id)}`, { method: 'POST', headers: headers(),
+          body: JSON.stringify({ machine, ok: !error, error }), signal: AbortSignal.timeout(5000) });
+      } catch { /* it expires on the host */ }
+    }
+  }
+
+  // Which models each card's server has in memory right now.
+  async function loaded() {
+    await Promise.all([...cards.values()].map(async (c) => {
+      if (c.server?.state !== 'ready') { c.loaded = []; return; }
+      try { c.loaded = ((await (await fetch(`${c.server.url}/api/ps`, { signal: AbortSignal.timeout(1500) })).json()).models || []).map((m) => m.name); }
+      catch { /* keep the last answer */ }
+    }));
+  }
+
   async function del(c, name) {
     try { await fetch(`${c.server.url}/api/delete`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: name }) }); }
     catch { removeModel(cfg.playground.path, name); }
@@ -250,10 +416,12 @@ export async function startAgent({
     const u = usage(pg.path, all);
     return {
       machine, os: platform, agent: VERSION, policy: cfg.policy, watcher: watch.supported !== false,
+      remote: !!cfg.remote, trusted: !!cfg.trusted, appliedVersion: cfg.remoteVersion, localOverride,
       cards: [...cards.values()].map((c) => ({
         id: c.card.id, workerId: c.worker ? workerId(c.card.id) : null, name: c.card.name, vendor: c.card.vendor,
         vramMB: c.card.vramMB, freeMB: c.card.freeMB, util: c.card.util, tempC: c.card.tempC, powerW: c.card.powerW,
         display: c.card.display, state: c.state, reason: c.reason, slots: c.server?.slots ?? null,
+        fixedSlots: cardCfg(c.card.id).slots ?? 'auto', loadedModel: c.loaded?.[0] ?? null, loadedModels: c.loaded ?? [],
         tuning: c.tuner ? (c.tuner.phase === 'measuring' ? `trying ${c.tuner.slots}` : 'tuned') : null,
       })),
       playground: { path: pg.path, limitGB: pg.limitGB, usedBytes: u.usedBytes, downloads: pg.downloads,
@@ -285,9 +453,11 @@ export async function startAgent({
         if (c) c.card = card; else cards.set(card.id, { card, index, server: null, worker: null, tuner: null, state: 'starting', reason: null });
       });
       for (const c of cards.values()) await ensureServer(c);
+      await syncRemote();
       await apply();
       await tune();
       await models();
+      await loaded();
       await sendReport();
     } catch (e) {
       log(`! agent tick: ${e.message}`);
@@ -309,29 +479,27 @@ export async function startAgent({
       const card = a.card && cards.get(a.card);
       if (a.card && !card) throw new Error(`no card ${a.card}`);
       switch (a.type) {
-        case 'pause': cardCfg(a.card).paused = true; break;
-        case 'resume': cardCfg(a.card).paused = false; break;
-        case 'disable': cardCfg(a.card).disabled = true; break;
-        case 'enable': cardCfg(a.card).disabled = false; break;
+        case 'pause': setLocal(`cards.${a.card}.paused`, true); break;
+        case 'resume': setLocal(`cards.${a.card}.paused`, false); break;
+        case 'disable': setLocal(`cards.${a.card}.disabled`, true); break;
+        case 'enable': setLocal(`cards.${a.card}.disabled`, false); break;
+        case 'slots': if (!card) throw new Error('which card?'); setLocal(`cards.${a.card}.slots`, a.slots); break;
         case 'policy':
-          if (!['when-free', 'always', 'schedule', 'never'].includes(a.policy)) throw new Error('policy is when-free, always, schedule or never');
-          cfg.policy = a.policy;
-          if (Array.isArray(a.schedule)) cfg.schedule = a.schedule;
+          setLocal('policy', a.policy);
+          if (Array.isArray(a.schedule)) setLocal('schedule', a.schedule);
           break;
         case 'playground':
-          if (a.limitGB != null) cfg.playground.limitGB = Math.max(1, Number(a.limitGB));
-          if (a.downloads != null) cfg.playground.downloads = !!a.downloads;
+          if (a.limitGB != null) setLocal('playground.limitGB', a.limitGB);
+          if (a.downloads != null) setLocal('playground.downloads', a.downloads);
           if (a.path) cfg.playground.path = String(a.path);   // takes effect when the servers next start
           break;
-        case 'lock': if (!cfg.playground.locked.includes(a.model)) cfg.playground.locked.push(a.model); break;
-        case 'unlock': cfg.playground.locked = cfg.playground.locked.filter((m) => m !== a.model); break;
-        case 'remove': {
-          if (cfg.playground.locked.includes(a.model)) throw new Error(`${a.model} is locked`);
-          const any = [...cards.values()].find((c) => c.server?.state === 'ready');
-          if (any) await del(any, a.model); else removeModel(cfg.playground.path, a.model);
-          await refreshAll();
-          break;
-        }
+        case 'lock': setLocal('locked', [...cfg.playground.locked, a.model]); break;
+        case 'unlock': setLocal('locked', cfg.playground.locked.filter((m) => m !== a.model)); break;
+        case 'remove': await removeLocal(a.model); break;
+        case 'remote': cfg.remote = !!a.on; if (!cfg.remote) localOverride = []; break;
+        case 'restart': await runCommand({ type: 'restart-card', card: a.card }); break;
+        case 'retune': await runCommand({ type: 'retune', card: a.card }); break;
+        case 'pull': await startPull(String(a.model || '').trim()); break;
         case 'join': {
           if (!/^http:\/\/[A-Za-z0-9.\-]+:\d+\/?$/.test(a.url || '')) throw new Error('the host URL should look like http://192.168.1.20:11500');
           for (const c of cards.values()) { await c.worker?.leave(); c.worker = null; }

@@ -18,6 +18,8 @@
   td.n { text-align: right; white-space: nowrap; }
   .days { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
   .days label { font-size: 13px; }
+  .inline { font-size: 13px; color: var(--mute); display: inline-flex; gap: 6px; align-items: center; }
+  .switch { display: flex; gap: 8px; align-items: baseline; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -46,6 +48,7 @@
     <input id="joinPw" type="password" placeholder="Pool password" aria-label="Pool password">
     <button class="primary" type="submit">Join</button>
   </form>
+  <label class="switch"><input type="checkbox" id="remote"> <span><b>Let the pool manage this PC.</b> <span class="note" id="remoteNote"></span></span></label>
 </section>
 
 <section class="panel">
@@ -76,6 +79,10 @@
     <label>Size limit (GB)<input type="number" id="limit" min="1" step="1"></label>
     <label>Downloads<select id="downloads"><option value="1">Allowed</option><option value="0">Not allowed</option></select></label>
     <div><button class="primary" type="submit">Save</button></div>
+  </form>
+  <form id="pullForm" class="row">
+    <input id="pullModel" placeholder="Model to download, e.g. qwen3:8b" aria-label="Model to download">
+    <button type="submit">Download</button>
   </form>
   <table><tbody id="models"></tbody></table>
 </section>

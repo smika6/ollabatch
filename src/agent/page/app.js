@@ -4,7 +4,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const STATE_TEXT = { lending: 'lending', 'paused-by-owner': 'paused', 'paused-in-use': 'stepped aside', 'outside-schedule': 'off schedule',
   never: 'not lending', disabled: 'lending off', starting: 'starting', restarting: 'restarting', misconfigured: 'needs attention', 'not-joined': 'not in a pool' };
-let S = null, formsFilled = false, pendingJoin = null;
+let S = null, formsFilled = '', pendingJoin = null;
 
 const gb = (b) => (b / 1024 ** 3).toFixed(1);
 const unknown = (v, f = (x) => x) => (v == null ? 'unknown' : f(v));
@@ -37,11 +37,17 @@ function renderCards() {
   $('cards').innerHTML = S.cards.map((c) => `<div class="bay ${c.state === 'lending' ? '' : 'paused'}">
     <div class="top1"><span class="label">${esc(c.name)}</span><span class="state">${esc(STATE_TEXT[c.state] || c.state)}</span></div>
     <div class="meta"><span>${esc(c.vramMB ? `${(c.vramMB / 1024).toFixed(0)} GB` : '')}</span><span>temperature ${esc(unknown(c.tempC, (t) => `${t}°C`))}</span>
-      ${c.slots ? `<span>${esc(c.slots)} at once${c.tuning ? ` (${esc(c.tuning)})` : ''}</span>` : ''}</div>
+      ${c.slots ? `<span>${esc(c.slots)} at once${c.fixedSlots !== 'auto' ? ' (fixed)' : c.tuning ? ` (${esc(c.tuning)})` : ''}</span>` : ''}
+      ${c.loadedModel ? `<span>in memory: ${esc(c.loadedModels.join(', '))}</span>` : ''}</div>
     ${c.reason ? `<div class="note">${esc(c.reason)}</div>` : ''}
     <div class="acts">
       ${c.paused ? `<button data-a="resume" data-card="${esc(c.id)}">Resume</button>` : `<button data-a="pause" data-card="${esc(c.id)}">Pause</button>`}
       ${c.disabled ? `<button data-a="enable" data-card="${esc(c.id)}">Turn lending on</button>` : `<button data-a="disable" data-card="${esc(c.id)}">Turn lending off</button>`}
+      <label class="inline">Requests at once <select data-slots="${esc(c.id)}" aria-label="Requests at once on ${esc(c.name)}">
+        ${['auto', 1, 2, 3, 4, 5, 6, 7, 8].map((n) => `<option value="${n}" ${String(c.fixedSlots) === String(n) ? 'selected' : ''}>${n === 'auto' ? 'auto (measured)' : n}</option>`).join('')}
+      </select></label>
+      ${c.slots ? `<button data-a="restart" data-card="${esc(c.id)}" title="Stop and start this card's Ollama server">Restart</button>` : ''}
+      ${c.slots && c.fixedSlots === 'auto' ? `<button data-a="retune" data-card="${esc(c.id)}" title="Forget the measured setting and measure again from 1">Re-tune</button>` : ''}
     </div></div>`).join('');
 }
 
@@ -50,6 +56,10 @@ function renderPool() {
   $('pool').innerHTML = (S.joined ? `<p>Lending to <b>${esc(S.host)}</b>. <button data-a="leave">Leave pool</button></p>` : '<p>Not in a pool yet.</p>')
     + (found.length ? `<p class="note">Found on this network: ${found.map((h) => `<button data-fill="${esc(h.url)}">${esc(h.name)} (${esc(h.url)})</button>`).join(' ')}</p>` : '');
   $('joinForm').hidden = S.joined;
+  $('remote').checked = !!S.remote;
+  $('remoteNote').textContent = S.remote
+    ? (S.localOverride?.length ? `You changed ${S.localOverride.join(', ')} here after the pool did; your setting stands until the pool changes it again.` : 'The pool\'s dashboard can change these settings and restart or re-tune cards. A change you make here always wins over an older one from the pool.')
+    : 'Only this page can change this PC. The pool sees its hardware and state.';
 }
 
 function renderModels() {
@@ -62,9 +72,12 @@ function renderModels() {
     : '<tr><td class="note">No models in the playground yet. They arrive when the pool needs them.</td></tr>';
 }
 
+// Fill the forms from the agent, again whenever its settings change (the pool
+// may change them) unless you're in the middle of editing one.
 function fillForms() {
-  if (formsFilled) return;
-  formsFilled = true;
+  const sig = JSON.stringify([S.policy, S.schedule, S.playground.limitGB, S.playground.downloads]);
+  if (formsFilled === sig || document.activeElement?.closest('#policyForm, #pgForm')) return;
+  formsFilled = sig;
   document.querySelector(`input[name="policy"][value="${S.policy}"]`).checked = true;
   const w = S.schedule[0] || { days: [0, 1, 2, 3, 4, 5, 6], from: '23:00', to: '07:00' };
   $('from').value = w.from; $('to').value = w.to;
@@ -103,8 +116,12 @@ document.addEventListener('click', async (e) => {
   } catch (err) { alert(err.message); }
 });
 
-document.addEventListener('change', (e) => {
+document.addEventListener('change', async (e) => {
   if (e.target.name === 'policy') $('scheduleBox').hidden = e.target.value !== 'schedule';
+  try {
+    if (e.target.dataset.slots) await act({ type: 'slots', card: e.target.dataset.slots, slots: e.target.value });
+    if (e.target.id === 'remote') await act({ type: 'remote', on: e.target.checked });
+  } catch (err) { alert(err.message); poll(); }
 });
 
 document.addEventListener('submit', async (e) => {
@@ -118,6 +135,9 @@ document.addEventListener('submit', async (e) => {
       await act({ type: 'policy', policy, schedule: [{ days, from: $('from').value, to: $('to').value }] });
     } else if (e.target.id === 'pgForm') {
       await act({ type: 'playground', limitGB: Number($('limit').value), downloads: $('downloads').value === '1' });
+    } else if (e.target.id === 'pullForm') {
+      await act({ type: 'pull', model: $('pullModel').value.trim() });
+      $('pullModel').value = '';
     }
   } catch (err) { alert(err.message); }
 });

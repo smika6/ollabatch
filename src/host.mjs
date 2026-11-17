@@ -16,6 +16,7 @@ import { Insights } from './insights.mjs';
 import { parseStats } from './infer.mjs';
 import { addRequestToJob, prune, trimLog, filterHistory, toCsv, timelineAdd } from './history.mjs';
 import { buildPrompt } from './summary.mjs';
+import { RemoteStore } from './remote.mjs';
 import { parseSelector, matchesSelector } from './labels.mjs';
 import { chooseModel, modelForCard, rewriteModel } from './models.mjs';
 import { advance, etaSeconds, queueEta } from './progress.mjs';
@@ -70,6 +71,7 @@ export async function startHost({
   const metrics = Metrics.fromJSON(readJson(files.metrics), { now });
   files.insights = path.join(stateDir, 'insights.json');
   const insights = Insights.fromJSON(readJson(files.insights), { now });
+  const remote = RemoteStore.fromJSON(state.remote, { now });
   let onRequestDone = null;   // set by job stats (history)
   const templates = loadTemplates(jobsFile);
   const selectors = new Map();                 // jobId → parsed selector
@@ -101,7 +103,7 @@ export async function startHost({
   const queue = new RequestQueue({ now, canServe, rankOf: (id) => (id === '_summary' ? Infinity : id === '_' ? Number.MAX_SAFE_INTEGER : store.rankOf(id)) });
   const liveCards = () => queue.activeWorkers().filter((w) => !w.paused);
 
-  const saveState = () => writeJsonAtomic(files.state, { jobs: store.toJSON(), cardLabels: userLabels, settings });
+  const saveState = () => writeJsonAtomic(files.state, { jobs: store.toJSON(), cardLabels: userLabels, settings, remote: remote.toJSON() });
   const saveMetrics = () => {
     try { writeJsonAtomic(files.metrics, metrics.toJSON()); writeJsonAtomic(files.insights, insights.toJSON()); }
     catch (e) { log(`! couldn't save metrics: ${e.message}`); }
@@ -544,10 +546,27 @@ export async function startHost({
       const b = await readJsonBody(req);
       const w = queue.workers.get(b.id);
       // The machine's owner has the final say: only they can resume what they paused.
-      if (w && !b.paused && ownerHolds(w)) throw new HttpError(409, `paused on its machine: ${ownerOf(w).reason || ownerOf(w).state}`);
+      // A machine that lets the pool manage it can be resumed from here when its
+      // owner paused it by hand; a game running or the schedule still wins.
+      if (w && !b.paused && ownerHolds(w)) {
+        const own = ownerOf(w), rep = reports.get(w.machine);
+        if (own.state !== 'paused-by-owner' || rep?.remote !== true) throw new HttpError(409, `paused on its machine: ${own.reason || own.state}`);
+        const c = rep.cards.find((x) => x.workerId === w.id);
+        remote.setDesired(w.machine, { [`cards.${c.id}.paused`]: false });
+        saver.schedule();
+      }
       if (!queue.setPaused(b.id, b.paused)) throw new HttpError(404, 'unknown card');
       changed();
       return send(res, 200, { ok: true });
+    }
+    // Remote control, pulled by agents on their tick.
+    if (req.method === 'GET' && p === '/pool/settings') return send(res, 200, { ...remote.desired(url.searchParams.get('machine') || ''), now: now() });
+    if (req.method === 'GET' && p === '/pool/commands') return send(res, 200, { commands: remote.pending(url.searchParams.get('machine') || '') });
+    if (req.method === 'POST' && (m = p.match(/^\/pool\/commands\/([\w-]+)$/))) {
+      const b = await readJsonBody(req);
+      const ok = remote.ack(String(b.machine || ''), m[1], { ok: !!b.ok, error: b.error ? String(b.error).slice(0, 500) : null });
+      if (ok) { saver.schedule(); log(`${b.ok ? '✓' : '!'} ${b.machine}: command ${m[1]}${b.error ? ` ${b.error}` : ''}`); }
+      return send(res, ok ? 200 : 410, { accepted: ok });
     }
     if (req.method === 'GET' && p === '/pool/info') {
       return send(res, 200, { token, port: listenPort, urls: lanAddresses().map((a) => `http://${a}:${listenPort}`) });
@@ -647,6 +666,35 @@ export async function startHost({
       }
       if (req.method === 'POST' && JOB_ACTIONS.has(m[2])) return send(res, 200, await jobAction(job, m[2], await readJsonBody(req)));
     }
+    if ((m = p.match(/^\/ob\/machines\/([^/]+)\/(settings|commands)$/))) {
+      const machine = decodeURIComponent(m[1]);
+      if (req.method === 'GET' && m[2] === 'settings') return send(res, 200, remote.desired(machine));
+      if (req.method === 'GET' && m[2] === 'commands') return send(res, 200, remote.commands(machine));
+      const managed = () => {
+        if (!reports.has(machine)) throw new HttpError(404, `no machine ${machine}`);
+        if (reports.get(machine).remote !== true) throw new HttpError(409, `${machine}'s owner hasn't let the pool manage it (on that PC: "Let the pool manage this PC")`);
+      };
+      if (req.method === 'PUT' && m[2] === 'settings') {
+        managed();
+        const b = await readJsonBody(req);
+        let d;
+        try { d = remote.setDesired(machine, b); } catch (e) { throw new HttpError(400, e.message); }
+        saver.schedule();
+        log(`~ ${machine}: settings ${Object.keys(b).join(', ')}`);
+        return send(res, 200, d);
+      }
+      if (req.method === 'POST' && m[2] === 'commands') {
+        managed();
+        const b = await readJsonBody(req);
+        if (['restart-card', 'retune'].includes(b.type) && !b.card) throw new HttpError(400, `${b.type} needs a card`);
+        if (['pull', 'remove-model'].includes(b.type) && !b.model) throw new HttpError(400, `${b.type} needs a model`);
+        let c;
+        try { c = remote.queueCommand(machine, b); } catch (e) { throw new HttpError(400, e.message); }
+        saver.schedule();
+        log(`~ ${machine}: ${c.type}${c.card ? ` ${c.card}` : ''}${c.model ? ` ${c.model}` : ''}`);
+        return send(res, 200, c);
+      }
+    }
     if (req.method === 'POST' && p === '/ob/cards/labels') {
       const b = await readJsonBody(req);
       const w = queue.workers.get(b.card);
@@ -711,7 +759,7 @@ export async function startHost({
   tick();
 
   return {
-    port: listenPort, token, store, queue,
+    port: listenPort, token, store, queue, remote,
     async close() {
       if (closing) return;
       closing = true;

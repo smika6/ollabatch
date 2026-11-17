@@ -45,11 +45,13 @@ async function stopRunningAgent() {
 async function install(f) {
   await stopRunningAgent();
   const r = await installAgent({ ...defaults(), ...realIo, binPath: BIN, trusted: !!f.trusted, userPath: await userPath() });
-  if (f.host) {
+  if (f.host || f.trusted) {
     const dir = path.join(os.homedir(), '.ollabatch', 'agent');
     const cfg = loadConfig(dir, { trusted: !!f.trusted });
-    cfg.host = f.host.replace(/\/+$/, '');
+    if (f.host) cfg.host = f.host.replace(/\/+$/, '');
     if (f.password) cfg.password = f.password;
+    // A trusted install is one of the pool owner's own PCs: let the pool manage it.
+    if (f.trusted) Object.assign(cfg, { trusted: true, remote: true });
     saveConfig(dir, cfg);
   }
   console.log(`ollabatch is on your PATH (${r.binDir}); open a new terminal to use it.`);
